@@ -1,6 +1,7 @@
 const STORAGE_KEY = "cabinet-ninja-run-list-v1";
 const TABLES = [
   "suppliers",
+  "leads",
   "jobs",
   "categories",
   "items",
@@ -35,6 +36,19 @@ const PRIORITY_OPTIONS = [
 ];
 
 const COMPLETED_STATUSES = new Set(["picked_up", "done", "cancelled"]);
+const CLOSED_JOB_STATUSES = new Set(["complete", "completed", "done", "cancelled", "archived"]);
+const CLOSED_LEAD_STATUSES = new Set(["accepted", "won", "lost", "cancelled"]);
+
+const LEAD_STATUS_OPTIONS = [
+  ["new_lead", "New lead"],
+  ["contacted", "Contacted"],
+  ["measure_booked", "Measure booked"],
+  ["quote_sent", "Quote sent"],
+  ["accepted", "Accepted"],
+  ["won", "Won"],
+  ["lost", "Lost"],
+  ["cancelled", "Cancelled"],
+];
 
 const CHECKLIST_TYPE_OPTIONS = [
   ["packing", "Packing"],
@@ -77,6 +91,7 @@ const DEFAULT_DATA = {
     supplier("Plumbing supplier", "Plumbing", ""),
     supplier("General farm supplies", "Farm supplies", ""),
   ],
+  leads: [],
   jobs: [
     job("CN-0042", "Charis Mariner", "Charis Mariner", "", "active"),
     job("", "Hayley Bregman", "Hayley Bregman", "", "active"),
@@ -160,7 +175,7 @@ const seedItems = [
   },
 ];
 
-let state = { suppliers: [], jobs: [], categories: [], items: [] };
+let state = { suppliers: [], leads: [], jobs: [], categories: [], items: [] };
 let dataStore = null;
 let backendStatus = {
   mode: "local",
@@ -518,6 +533,33 @@ function normalizeState(data) {
       default_contact: item.default_contact || "",
       notes: item.notes || "",
     })),
+    leads: (data.leads || []).map((item) => ({
+      lead_name: "",
+      client_name: "",
+      phone: "",
+      email: "",
+      location: "",
+      source: "",
+      status: "new_lead",
+      priority: "normal",
+      next_follow_up: "",
+      notes: "",
+      converted_job_id: "",
+      active: true,
+      ...item,
+      lead_name: item.lead_name || "",
+      client_name: item.client_name || "",
+      phone: item.phone || "",
+      email: item.email || "",
+      location: item.location || "",
+      source: item.source || "",
+      status: item.status || "new_lead",
+      priority: item.priority || "normal",
+      next_follow_up: item.next_follow_up || "",
+      notes: item.notes || "",
+      converted_job_id: item.converted_job_id || "",
+      active: item.active !== false,
+    })),
     jobs: (data.jobs || []).map((item) => ({
       job_number: "",
       client_name: "",
@@ -683,6 +725,7 @@ function createSupabaseStore(config) {
   async function loadTables() {
     const [
       suppliers,
+      leads,
       jobs,
       categories,
       items,
@@ -694,6 +737,7 @@ function createSupabaseStore(config) {
       jobChecklistItems,
     ] = await Promise.all([
       client.from("suppliers").select("*").order("supplier_name"),
+      client.from("leads").select("*").order("created_at", { ascending: false }),
       client.from("jobs").select("*").order("job_name"),
       client.from("categories").select("*").order("category_name"),
       client.from("items").select("*").order("created_at", { ascending: false }),
@@ -707,6 +751,7 @@ function createSupabaseStore(config) {
 
     const result = {
       suppliers,
+      leads,
       jobs,
       categories,
       items,
@@ -723,6 +768,7 @@ function createSupabaseStore(config) {
 
     return normalizeState({
       suppliers: suppliers.data || [],
+      leads: leads.data || [],
       jobs: jobs.data || [],
       categories: categories.data || [],
       items: items.data || [],
@@ -748,6 +794,7 @@ function createSupabaseStore(config) {
   async function saveFullState(nextState) {
     const normalized = normalizeState(nextState);
     await upsertRows("suppliers", normalized.suppliers.map(cleanSupplier));
+    await upsertRows("leads", normalized.leads.map(cleanLead));
     await upsertRows("jobs", normalized.jobs.map(cleanJob));
     await upsertRows("categories", normalized.categories.map(cleanCategory));
     await upsertRows("items", normalized.items.map(cleanItem));
@@ -822,6 +869,26 @@ function cleanSupplier(item) {
     default_contact: item.default_contact || null,
     notes: item.notes || null,
     active: item.active !== false,
+  });
+}
+
+function cleanLead(item) {
+  return pickDefined({
+    id: item.id,
+    lead_name: item.lead_name || "",
+    client_name: item.client_name || "",
+    phone: item.phone || null,
+    email: item.email || null,
+    location: item.location || "",
+    source: item.source || null,
+    status: item.status || "new_lead",
+    priority: item.priority || "normal",
+    next_follow_up: item.next_follow_up || null,
+    notes: item.notes || null,
+    converted_job_id: item.converted_job_id || null,
+    active: item.active !== false,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
   });
 }
 
@@ -975,6 +1042,27 @@ function createItem(input) {
   };
 }
 
+function createLead(input) {
+  const now = nowIso();
+  return {
+    id: uid("lead"),
+    lead_name: input.lead_name?.trim() || input.job_name?.trim() || input.client_name?.trim() || "New lead",
+    client_name: input.client_name?.trim() || "",
+    phone: input.phone || "",
+    email: input.email || "",
+    location: input.location || "",
+    source: input.source || "",
+    status: input.status || "new_lead",
+    priority: input.priority || "normal",
+    next_follow_up: input.next_follow_up || "",
+    notes: input.notes || "",
+    converted_job_id: input.converted_job_id || "",
+    active: input.active !== false,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
 function render() {
   const route = getRoute();
   document.querySelectorAll(".bottom-nav a").forEach((link) => {
@@ -986,6 +1074,9 @@ function render() {
     home: renderHome,
     suppliers: renderSuppliers,
     supplier: () => renderSupplierDetail(route.id),
+    leads: renderLeads,
+    lead: () => renderLeadDetail(route.id),
+    leadform: () => renderLeadForm(route.params, route.id),
     jobs: renderJobs,
     job: () => renderJobDetail(route.id),
     checklist: () => renderChecklistDetail(route.id),
@@ -1076,6 +1167,8 @@ function getRoute() {
   if (!parts.length) return { name: "home", section: "home", params };
   if (parts[0] === "checklists" && parts[1]) return { name: "checklist", section: "jobs", id: parts[1], params };
   if (parts[0] === "templates" && parts[1]) return { name: "template", section: "templates", id: parts[1], params };
+  if (parts[0] === "leads" && parts[1]) return { name: "lead", section: "leads", id: parts[1], params };
+  if (parts[0] === "leadform" && parts[1]) return { name: "leadform", section: "leads", id: parts[1], params };
   if (parts[0] === "suppliers" && parts[1]) return { name: "supplier", section: "suppliers", id: parts[1], params };
   if (parts[0] === "jobs" && parts[1]) return { name: "job", section: "jobs", id: parts[1], params };
   if (parts[0] === "edit" && parts[1]) return { name: "edit", id: parts[1], params };
@@ -1103,6 +1196,10 @@ function supplierById(id) {
   return state.suppliers.find((item) => item.id === id);
 }
 
+function leadById(id) {
+  return state.leads.find((item) => item.id === id);
+}
+
 function jobById(id) {
   return state.jobs.find((item) => item.id === id);
 }
@@ -1115,9 +1212,27 @@ function itemById(id) {
   return state.items.find((item) => item.id === id);
 }
 
+function activeLeads() {
+  return state.leads.filter((item) => item.active !== false && !CLOSED_LEAD_STATUSES.has(item.status));
+}
+
+function closedLeads() {
+  return state.leads.filter((item) => item.active === false || CLOSED_LEAD_STATUSES.has(item.status));
+}
+
+function openJobs() {
+  return state.jobs.filter((item) => item.active !== false && !CLOSED_JOB_STATUSES.has(item.status));
+}
+
+function closedJobs() {
+  return state.jobs.filter((item) => item.active === false || CLOSED_JOB_STATUSES.has(item.status));
+}
+
 function renderHome() {
   setTitle("Run List");
   const neededCount = activeItems().length;
+  const activeLeadCount = activeLeads().length;
+  const openJobCount = openJobs().length;
   const supplierCount = state.suppliers.filter((supplierItem) => supplierItem.active).length;
   const orderedCount = activeItems().filter((item) => item.status === "ordered").length;
   const readyCount = activeItems().filter((item) => item.status === "ready_to_collect").length;
@@ -1128,7 +1243,8 @@ function renderHome() {
       <section class="grid-actions" aria-label="Main sections">
         ${homeTile("Run List by Supplier", `${neededCount} active`, "#/suppliers")}
         ${homeTile("Orders", `${orderedCount} waiting`, "#/orders")}
-        ${homeTile("Jobs", "Materials by job", "#/jobs")}
+        ${homeTile("Leads", `${activeLeadCount} active`, "#/leads")}
+        ${homeTile("Jobs", `${openJobCount} open`, "#/jobs")}
         ${homeTile("Add Item", "Quick entry", "#/add")}
         ${homeTile("Search", "Find anything", "#/search")}
         ${homeTile("Checklist Templates", "Packing and QC", "#/templates")}
@@ -1138,6 +1254,8 @@ function renderHome() {
         <h2>Today</h2>
         <div class="list">
           ${metricRow("Active items", neededCount)}
+          ${metricRow("Active leads", activeLeadCount)}
+          ${metricRow("Open jobs", openJobCount)}
           ${metricRow("Ready to collect", readyCount)}
           ${metricRow("Active suppliers", supplierCount)}
         </div>
@@ -1228,10 +1346,154 @@ function renderSupplierDetail(id) {
   document.getElementById("copySupplierList").addEventListener("click", () => copySupplierList(supplierItem, items));
 }
 
+function renderLeads() {
+  const params = getRoute().params;
+  const showClosed = params.show === "closed";
+  setTitle(showClosed ? "Closed Leads" : "Leads");
+  const leads = (showClosed ? closedLeads() : activeLeads())
+    .sort((a, b) => leadSortValue(a).localeCompare(leadSortValue(b)));
+  const rows = leads.map((leadItem) => `
+    <a class="list-link" href="#/leads/${leadItem.id}">
+      <span>
+        <strong>${escapeHtml(labelForLead(leadItem))}</strong><br>
+        <span class="muted">${escapeHtml([readable(leadItem.status), leadItem.location, leadItem.next_follow_up ? `Follow up ${formatDate(leadItem.next_follow_up)}` : ""].filter(Boolean).join(" - "))}</span>
+      </span>
+      <span class="priority-pill ${escapeAttr(leadItem.priority)}">${escapeHtml(readable(leadItem.priority))}</span>
+    </a>
+  `).join("");
+
+  app.innerHTML = `
+    <div class="stack">
+      <div class="toolbar">
+        <a class="primary-action" href="#/leadform">Add lead</a>
+        <a class="ghost-button" href="${showClosed ? "#/leads" : "#/leads?show=closed"}">${showClosed ? "Show active" : "Show closed"}</a>
+      </div>
+      <section class="list">${rows || empty(showClosed ? "No closed leads yet." : "No active leads yet.")}</section>
+    </div>
+  `;
+}
+
+function renderLeadDetail(id) {
+  const leadItem = leadById(id);
+  if (!leadItem) {
+    renderNotFound("Lead not found.");
+    return;
+  }
+  setTitle(labelForLead(leadItem));
+  const convertedJob = jobById(leadItem.converted_job_id);
+  app.innerHTML = `
+    <div class="stack">
+      <div class="toolbar">
+        <a class="primary-action" href="#/leadform/${leadItem.id}">Edit lead</a>
+        ${convertedJob ? `<a class="ghost-button" href="#/jobs/${convertedJob.id}">Open job</a>` : '<button class="ghost-button" id="convertLeadButton" type="button">Create job</button>'}
+        <button class="ghost-button" id="closeLeadButton" type="button">${CLOSED_LEAD_STATUSES.has(leadItem.status) ? "Reopen lead" : "Close lead"}</button>
+      </div>
+      <section class="panel">
+        <h2>Lead Details</h2>
+        <div class="list">
+          ${metricRow("Status", readable(leadItem.status))}
+          ${metricRow("Priority", readable(leadItem.priority))}
+          ${metricRow("Client", leadItem.client_name || "Not set")}
+          ${metricRow("Phone", leadItem.phone || "Not set")}
+          ${metricRow("Email", leadItem.email || "Not set")}
+          ${metricRow("Location", leadItem.location || "Not set")}
+          ${metricRow("Source", leadItem.source || "Not set")}
+          ${metricRow("Next follow-up", leadItem.next_follow_up ? formatDate(leadItem.next_follow_up) : "Not set")}
+        </div>
+        ${leadItem.notes ? `<p class="item-notes lead-notes">${linkify(leadItem.notes)}</p>` : ""}
+      </section>
+    </div>
+  `;
+
+  document.getElementById("convertLeadButton")?.addEventListener("click", () => convertLeadToJob(id));
+  document.getElementById("closeLeadButton").addEventListener("click", () => toggleLeadClosed(id));
+}
+
+function renderLeadForm(params = {}, id = null) {
+  const editing = id ? leadById(id) : null;
+  const leadItem = editing || createLead({});
+  setTitle(editing ? "Edit Lead" : "Add Lead");
+  app.innerHTML = `
+    <form class="panel form-grid" id="leadForm">
+      ${field("Lead/job name", "lead_name", "text", leadItem.lead_name, "full", true)}
+      ${field("Client name", "client_name", "text", leadItem.client_name)}
+      ${field("Phone", "phone", "tel", leadItem.phone)}
+      ${field("Email", "email", "email", leadItem.email)}
+      ${field("Location", "location", "text", leadItem.location)}
+      ${field("Source", "source", "text", leadItem.source)}
+      ${selectField("Status", "status", leadItem.status, LEAD_STATUS_OPTIONS)}
+      ${selectField("Priority", "priority", leadItem.priority, PRIORITY_OPTIONS)}
+      ${field("Next follow-up", "next_follow_up", "date", leadItem.next_follow_up)}
+      ${textareaField("Notes", "notes", leadItem.notes, "full")}
+      <div class="form-actions">
+        <button class="primary-action" type="submit">Save</button>
+        <a class="ghost-button" href="${editing ? `#/leads/${editing.id}` : "#/leads"}">Cancel</a>
+      </div>
+    </form>
+  `;
+
+  document.getElementById("leadForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const nextValues = Object.fromEntries(form.entries());
+    if (editing) {
+      Object.assign(editing, nextValues, {
+        active: !CLOSED_LEAD_STATUSES.has(nextValues.status),
+        updated_at: nowIso(),
+      });
+      saveState();
+      navigate(`/leads/${editing.id}`);
+    } else {
+      const nextLead = createLead(nextValues);
+      nextLead.active = !CLOSED_LEAD_STATUSES.has(nextLead.status);
+      state.leads.unshift(nextLead);
+      saveState();
+      navigate(`/leads/${nextLead.id}`);
+    }
+  });
+}
+
+function convertLeadToJob(id) {
+  const leadItem = leadById(id);
+  if (!leadItem) return;
+  const existingJob = jobById(leadItem.converted_job_id);
+  if (existingJob) {
+    navigate(`/jobs/${existingJob.id}`);
+    return;
+  }
+  const nextJob = job("", leadItem.client_name || leadItem.lead_name, leadItem.lead_name, leadItem.location, "active");
+  state.jobs.unshift(nextJob);
+  Object.assign(leadItem, {
+    status: "accepted",
+    active: false,
+    converted_job_id: nextJob.id,
+    updated_at: nowIso(),
+  });
+  saveState();
+  navigate(`/jobs/${nextJob.id}`);
+}
+
+function toggleLeadClosed(id) {
+  const leadItem = leadById(id);
+  if (!leadItem) return;
+  if (CLOSED_LEAD_STATUSES.has(leadItem.status) || leadItem.active === false) {
+    leadItem.status = "contacted";
+    leadItem.active = true;
+  } else {
+    leadItem.status = "lost";
+    leadItem.active = false;
+  }
+  leadItem.updated_at = nowIso();
+  saveState();
+  navigate("/leads");
+}
+
 function renderJobs() {
   setTitle("Jobs");
-  const rows = state.jobs
-    .filter((jobItem) => jobItem.active)
+  const params = getRoute().params;
+  const showClosed = params.show === "closed";
+  const jobs = showClosed ? closedJobs() : openJobs();
+  const rows = jobs
     .sort((a, b) => labelForJob(a).localeCompare(labelForJob(b)))
     .map((jobItem) => {
       const count = activeItems().filter((item) => item.job_id === jobItem.id).length;
@@ -1245,7 +1507,7 @@ function renderJobs() {
         <a class="list-link" href="#/jobs/${jobItem.id}">
           <span>
             <strong>${escapeHtml(labelForJob(jobItem))}</strong><br>
-            <span class="muted">${escapeHtml([jobItem.job_number, jobItem.location, checklistMeta].filter(Boolean).join(" - ") || "Job")}</span>
+            <span class="muted">${escapeHtml([readable(jobItem.status), jobItem.job_number, jobItem.location, checklistMeta].filter(Boolean).join(" - ") || "Job")}</span>
           </span>
           <span class="count-pill">${count}</span>
         </a>
@@ -1257,8 +1519,9 @@ function renderJobs() {
     <div class="stack">
       <div class="toolbar">
         <a class="primary-action" href="#/add">Add item</a>
+        <a class="ghost-button" href="${showClosed ? "#/jobs" : "#/jobs?show=closed"}">${showClosed ? "Show open" : "Show complete/cancelled"}</a>
       </div>
-      <section class="list">${rows || empty("No active jobs yet.")}</section>
+      <section class="list">${rows || empty(showClosed ? "No completed or cancelled jobs yet." : "No open jobs yet.")}</section>
     </div>
   `;
 }
@@ -1280,6 +1543,8 @@ function renderJobDetail(id) {
         <a class="primary-action" href="#/add?job_id=${encodeURIComponent(id)}">Add for job</a>
         <a class="ghost-button" href="#/history?job_id=${encodeURIComponent(id)}">Completed</a>
         <button class="ghost-button" id="completeJobButton" type="button">${jobItem.status === "complete" ? "Reopen job" : "Mark job complete"}</button>
+        <button class="ghost-button" id="cancelJobButton" type="button">${jobItem.status === "cancelled" ? "Reopen cancelled" : "Cancel job"}</button>
+        <button class="ghost-button" id="archiveJobButton" type="button">${jobItem.active === false ? "Unarchive" : "Archive"}</button>
       </div>
       ${qcWarning ? `<section class="warning-panel"><strong>QC checklist incomplete.</strong><br><span>Complete QC or use a checklist override before marking this job complete.</span></section>` : ""}
       ${renderJobChecklistArea(id)}
@@ -1303,6 +1568,8 @@ function renderJobDetail(id) {
 
   bindJobChecklistArea(id);
   document.getElementById("completeJobButton").addEventListener("click", () => toggleJobComplete(id));
+  document.getElementById("cancelJobButton").addEventListener("click", () => toggleJobCancelled(id));
+  document.getElementById("archiveJobButton").addEventListener("click", () => toggleJobArchived(id));
 }
 
 function renderJobChecklistArea(jobId) {
@@ -1381,7 +1648,32 @@ function toggleJobComplete(jobId) {
   jobItem.status = "complete";
   jobItem.updated_at = nowIso();
   saveState();
-  render();
+  navigate("/jobs");
+}
+
+function toggleJobCancelled(jobId) {
+  const jobItem = jobById(jobId);
+  if (!jobItem) return;
+  if (jobItem.status === "cancelled") {
+    jobItem.status = "active";
+    jobItem.active = true;
+  } else {
+    const ok = window.confirm("Move this job out of the active job list as cancelled?");
+    if (!ok) return;
+    jobItem.status = "cancelled";
+  }
+  jobItem.updated_at = nowIso();
+  saveState();
+  navigate("/jobs");
+}
+
+function toggleJobArchived(jobId) {
+  const jobItem = jobById(jobId);
+  if (!jobItem) return;
+  jobItem.active = jobItem.active === false;
+  jobItem.updated_at = nowIso();
+  saveState();
+  navigate(jobItem.active ? `/jobs/${jobId}` : "/jobs");
 }
 
 function renderChecklistDetail(id) {
@@ -1889,6 +2181,7 @@ function renderSearch() {
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
   const query = params.get("q") || "";
   const results = query ? searchItems(query, state.items) : [];
+  const leadResults = query ? searchLeads(query) : [];
 
   app.innerHTML = `
     <div class="stack">
@@ -1896,8 +2189,33 @@ function renderSearch() {
         <input id="searchInput" type="search" value="${escapeAttr(query)}" placeholder="Search item, supplier, job, notes" autocomplete="off" />
         <button class="primary-action" type="submit">Search</button>
       </form>
+      ${query ? `
+        <section>
+          <div class="section-heading">
+            <h2>Leads</h2>
+            <span class="count-pill">${leadResults.length}</span>
+          </div>
+          <div class="list">
+            ${leadResults.length ? leadResults.map((leadItem) => `
+              <a class="list-link" href="#/leads/${leadItem.id}">
+                <span>
+                  <strong>${escapeHtml(labelForLead(leadItem))}</strong><br>
+                  <span class="muted">${escapeHtml([readable(leadItem.status), leadItem.location, leadItem.phone, leadItem.email].filter(Boolean).join(" - "))}</span>
+                </span>
+                <span class="priority-pill ${escapeAttr(leadItem.priority)}">${escapeHtml(readable(leadItem.priority))}</span>
+              </a>
+            `).join("") : empty("No matching leads.")}
+          </div>
+        </section>
+      ` : ""}
+      <section>
+        <div class="section-heading">
+          <h2>Run List Items</h2>
+          <span class="count-pill">${results.length}</span>
+        </div>
       <section class="list">
         ${query ? renderItemList(results, { includeCompleted: true }) : empty("Enter a search term.")}
+      </section>
       </section>
     </div>
   `;
@@ -2238,6 +2556,23 @@ function searchItems(query, items) {
   });
 }
 
+function searchLeads(query) {
+  const term = query.toLowerCase();
+  return state.leads.filter((leadItem) => {
+    const haystack = [
+      leadItem.lead_name,
+      leadItem.client_name,
+      leadItem.phone,
+      leadItem.email,
+      leadItem.location,
+      leadItem.source,
+      leadItem.notes,
+      readable(leadItem.status),
+    ].join(" ").toLowerCase();
+    return haystack.includes(term);
+  });
+}
+
 function renderNotFound(message) {
   setTitle("Not Found");
   app.innerHTML = empty(message);
@@ -2249,6 +2584,16 @@ function empty(message) {
 
 function labelForJob(jobItem) {
   return [jobItem.job_number, jobItem.job_name || jobItem.client_name].filter(Boolean).join(" ");
+}
+
+function labelForLead(leadItem) {
+  return [leadItem.lead_name, leadItem.client_name && leadItem.client_name !== leadItem.lead_name ? leadItem.client_name : ""].filter(Boolean).join(" - ");
+}
+
+function leadSortValue(leadItem) {
+  const date = leadItem.next_follow_up || "9999-12-31";
+  const priority = { urgent: "0", normal: "1", low: "2" }[leadItem.priority] || "1";
+  return `${date}-${priority}-${labelForLead(leadItem).toLowerCase()}`;
 }
 
 function readable(value) {

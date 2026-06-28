@@ -26,6 +26,24 @@ create table suppliers (
   updated_at timestamptz not null default now()
 );
 
+create table leads (
+  id text primary key default gen_random_uuid()::text,
+  lead_name text not null default '',
+  client_name text not null default '',
+  phone text,
+  email text,
+  location text not null default '',
+  source text,
+  status text not null default 'new_lead',
+  priority run_item_priority not null default 'normal',
+  next_follow_up date,
+  notes text,
+  converted_job_id text,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table jobs (
   id text primary key default gen_random_uuid()::text,
   job_number text not null default '',
@@ -94,6 +112,9 @@ create table material_template_items (
 create trigger suppliers_set_updated_at before update on suppliers
 for each row execute function set_updated_at();
 
+create trigger leads_set_updated_at before update on leads
+for each row execute function set_updated_at();
+
 create trigger jobs_set_updated_at before update on jobs
 for each row execute function set_updated_at();
 
@@ -114,10 +135,13 @@ create index items_active_job_idx on items (job_id, status);
 create index items_status_idx on items (status);
 create index items_needed_by_idx on items (needed_by);
 create index suppliers_active_idx on suppliers (active);
+create index leads_status_idx on leads (status, active);
+create index leads_follow_up_idx on leads (next_follow_up);
 create index jobs_active_idx on jobs (active);
 create index material_template_items_template_idx on material_template_items (template_id, sort_order);
 
 alter table suppliers enable row level security;
+alter table leads enable row level security;
 alter table jobs enable row level security;
 alter table categories enable row level security;
 alter table items enable row level security;
@@ -128,6 +152,11 @@ create policy "authenticated users can read suppliers"
 on suppliers for select to authenticated using (true);
 create policy "authenticated users can write suppliers"
 on suppliers for all to authenticated using (true) with check (true);
+
+create policy "authenticated users can read leads"
+on leads for select to authenticated using (true);
+create policy "authenticated users can write leads"
+on leads for all to authenticated using (true) with check (true);
 
 create policy "authenticated users can read jobs"
 on jobs for select to authenticated using (true);

@@ -9,6 +9,8 @@ Cabinet Ninja pickup/order list MVP.
 - Supplier view with active item counts and supplier-only detail.
 - Job view with outstanding item counts and job detail grouped by supplier.
 - Job-based packing and QC completion checklists generated from editable templates.
+- Lightweight lead tracking with follow-up dates, lead statuses, and conversion into jobs.
+- Open Jobs hides complete/cancelled/archived jobs by default, with a separate completed/cancelled view.
 - Checklist progress, required item completion rules, notes, photo-link fields, and override completion notes.
 - Status/orders view.
 - Completed history with reopen support for run-list items and retained completed checklists.
@@ -52,6 +54,8 @@ The schema enables row level security and lets authenticated Supabase users read
 
 For an existing Supabase project that already has the original Run List tables, run `supabase-checklists-migration.sql` once to add the checklist tables.
 
+Run `supabase-leads-migration.sql` once to add the lead tracking table to an existing project.
+
 ## Running locally
 
 Open `index.html` directly for a quick check, or serve the folder over HTTP for full PWA behavior.
@@ -67,6 +71,7 @@ http://127.0.0.1:5177/
 Use `supabase-schema.sql` as the first backend shape. The existing app data names match the schema closely:
 
 - `suppliers`
+- `leads`
 - `jobs`
 - `categories`
 - `items`
