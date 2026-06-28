@@ -1,4 +1,5 @@
 const STORAGE_KEY = "cabinet-ninja-run-list-v1";
+const TABLES = ["suppliers", "jobs", "categories", "items"];
 
 const STATUS_OPTIONS = [
   ["needed", "Needed"],
@@ -116,22 +117,55 @@ const seedItems = [
   },
 ];
 
-let state = loadState();
+let state = { suppliers: [], jobs: [], categories: [], items: [] };
+let dataStore = null;
+let backendStatus = {
+  mode: "local",
+  message: "Local browser storage",
+  userEmail: "",
+};
+let remoteSaveQueue = Promise.resolve();
 
 const app = document.getElementById("app");
 const title = document.getElementById("screenTitle");
 const backButton = document.getElementById("backButton");
 const quickAddButton = document.getElementById("quickAddButton");
 
-window.addEventListener("hashchange", render);
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("hashchange", () => {
+  if (backendStatus.authRequired) {
+    renderAuthScreen();
+    return;
+  }
+  render();
+});
+window.addEventListener("DOMContentLoaded", initializeApp);
+
+async function initializeApp() {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("service-worker.js").catch(() => {});
   }
   quickAddButton.addEventListener("click", () => navigate("/add"));
   backButton.addEventListener("click", () => history.back());
+  renderLoading();
+
+  dataStore = createDataStore();
+  const loaded = await dataStore.load();
+  backendStatus = {
+    mode: loaded.mode,
+    message: loaded.message,
+    userEmail: loaded.userEmail || "",
+    authRequired: loaded.authRequired || false,
+  };
+
+  if (loaded.authRequired) {
+    state = loadLocalState(false);
+    renderAuthScreen();
+    return;
+  }
+
+  state = loaded.state;
   render();
-});
+}
 
 function supplier(supplier_name, supplier_type, town = "") {
   return {
@@ -175,16 +209,7 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    try {
-      return normalizeState(JSON.parse(saved));
-    } catch {
-      localStorage.removeItem(STORAGE_KEY);
-    }
-  }
-
+function buildSeedState() {
   const data = JSON.parse(JSON.stringify(DEFAULT_DATA));
   const supplierByName = Object.fromEntries(data.suppliers.map((item) => [item.supplier_name, item.id]));
   const jobByName = Object.fromEntries(data.jobs.map((item) => [item.job_name, item.id]));
@@ -195,26 +220,272 @@ function loadState() {
     job_id: jobByName[item.job],
     category_id: categoryByName[item.category],
   }));
-  saveState(data);
+  return data;
+}
+
+function loadLocalState(persistSeed = true) {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    try {
+      return normalizeState(JSON.parse(saved));
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }
+
+  const data = buildSeedState();
+  if (persistSeed) {
+    saveState(data);
+  } else {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
   return data;
 }
 
 function normalizeState(data) {
   return {
-    suppliers: data.suppliers || [],
-    jobs: data.jobs || [],
-    categories: data.categories || [],
+    suppliers: (data.suppliers || []).map((item) => ({
+      default_contact: "",
+      notes: "",
+      town: "",
+      supplier_type: "",
+      active: true,
+      ...item,
+      town: item.town || "",
+      default_contact: item.default_contact || "",
+      notes: item.notes || "",
+    })),
+    jobs: (data.jobs || []).map((item) => ({
+      job_number: "",
+      client_name: "",
+      job_name: "",
+      location: "",
+      status: "active",
+      active: true,
+      ...item,
+      job_number: item.job_number || "",
+      client_name: item.client_name || "",
+      job_name: item.job_name || "",
+      location: item.location || "",
+    })),
+    categories: (data.categories || []).map((item) => ({
+      notes: "",
+      ...item,
+      notes: item.notes || "",
+    })),
     items: (data.items || []).map((item) => ({
       photo_url: "",
       product_link: "",
       completed_at: null,
       ...item,
+      quantity: item.quantity || "",
+      unit: item.unit || "",
+      job_id: item.job_id || "",
+      category_id: item.category_id || "",
+      needed_by: item.needed_by || "",
+      notes: item.notes || "",
+      product_link: item.product_link || "",
+      photo_url: item.photo_url || "",
     })),
   };
 }
 
 function saveState(nextState = state) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+  if (dataStore?.saveState) {
+    const snapshot = JSON.parse(JSON.stringify(nextState));
+    remoteSaveQueue = remoteSaveQueue
+      .then(() => dataStore.saveState(snapshot))
+      .catch((error) => {
+        backendStatus.message = `Sync error: ${error.message}`;
+        toast(backendStatus.message);
+      });
+  }
+}
+
+function createDataStore() {
+  const config = window.RUN_LIST_CONFIG || {};
+  const hasSupabaseConfig = Boolean(config.supabaseUrl && config.supabaseAnonKey);
+  const hasSupabaseClient = Boolean(window.supabase?.createClient);
+
+  if (hasSupabaseConfig && hasSupabaseClient) {
+    return createSupabaseStore(config);
+  }
+
+  return {
+    mode: "local",
+    async load() {
+      return {
+        mode: "local",
+        message: hasSupabaseConfig ? "Supabase client failed to load; using local storage" : "Local browser storage",
+        state: loadLocalState(),
+      };
+    },
+  };
+}
+
+function createSupabaseStore(config) {
+  const client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  async function requireSessionIfConfigured() {
+    if (!config.requireAuth) return null;
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
+    return data.session;
+  }
+
+  async function loadTables() {
+    const [suppliers, jobs, categories, items] = await Promise.all([
+      client.from("suppliers").select("*").order("supplier_name"),
+      client.from("jobs").select("*").order("job_name"),
+      client.from("categories").select("*").order("category_name"),
+      client.from("items").select("*").order("created_at", { ascending: false }),
+    ]);
+
+    const result = { suppliers, jobs, categories, items };
+    for (const key of TABLES) {
+      if (result[key].error) throw result[key].error;
+    }
+
+    return normalizeState({
+      suppliers: suppliers.data || [],
+      jobs: jobs.data || [],
+      categories: categories.data || [],
+      items: items.data || [],
+    });
+  }
+
+  async function seedRemoteIfNeeded(remoteState) {
+    if (!config.seedRemoteOnFirstRun) return remoteState;
+    const hasAnyData = TABLES.some((key) => remoteState[key]?.length);
+    if (hasAnyData) return remoteState;
+
+    const seedState = loadLocalState(false);
+    await saveFullState(seedState);
+    return loadTables();
+  }
+
+  async function saveFullState(nextState) {
+    const normalized = normalizeState(nextState);
+    await upsertRows("suppliers", normalized.suppliers.map(cleanSupplier));
+    await upsertRows("jobs", normalized.jobs.map(cleanJob));
+    await upsertRows("categories", normalized.categories.map(cleanCategory));
+    await upsertRows("items", normalized.items.map(cleanItem));
+  }
+
+  async function upsertRows(table, rows) {
+    if (!rows.length) return;
+    const { error } = await client.from(table).upsert(rows, { onConflict: "id" });
+    if (error) throw error;
+  }
+
+  return {
+    mode: "supabase",
+    client,
+    async load() {
+      const session = await requireSessionIfConfigured();
+      if (config.requireAuth && !session) {
+        return {
+          mode: "supabase",
+          message: "Sign in to sync with Supabase",
+          authRequired: true,
+          state: loadLocalState(),
+        };
+      }
+
+      const remoteState = await seedRemoteIfNeeded(await loadTables());
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteState));
+      return {
+        mode: "supabase",
+        message: "Synced with Supabase",
+        userEmail: session?.user?.email || "",
+        state: remoteState,
+      };
+    },
+    saveState: saveFullState,
+    async deleteItem(id) {
+      const { error } = await client.from("items").delete().eq("id", id);
+      if (error) throw error;
+    },
+    async signInWithEmail(email) {
+      const { error } = await client.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${location.origin}${location.pathname}`,
+        },
+      });
+      if (error) throw error;
+    },
+    async signOut() {
+      const { error } = await client.auth.signOut();
+      if (error) throw error;
+    },
+  };
+}
+
+function cleanSupplier(item) {
+  return pickDefined({
+    id: item.id,
+    supplier_name: item.supplier_name,
+    supplier_type: item.supplier_type || "",
+    town: item.town || null,
+    default_contact: item.default_contact || null,
+    notes: item.notes || null,
+    active: item.active !== false,
+  });
+}
+
+function cleanJob(item) {
+  return pickDefined({
+    id: item.id,
+    job_number: item.job_number || "",
+    client_name: item.client_name || "",
+    job_name: item.job_name || "",
+    location: item.location || "",
+    status: item.status || "active",
+    active: item.active !== false,
+    created_at: item.created_at,
+  });
+}
+
+function cleanCategory(item) {
+  return pickDefined({
+    id: item.id,
+    category_name: item.category_name,
+    notes: item.notes || null,
+  });
+}
+
+function cleanItem(item) {
+  return pickDefined({
+    id: item.id,
+    item_name: item.item_name,
+    quantity: item.quantity || "",
+    unit: item.unit || "",
+    supplier_id: item.supplier_id,
+    job_id: item.job_id || null,
+    category_id: item.category_id || null,
+    type: item.type || "pickup",
+    status: item.status || "needed",
+    needed_by: item.needed_by || null,
+    priority: item.priority || "normal",
+    notes: item.notes || null,
+    product_link: item.product_link || null,
+    photo_url: item.photo_url || null,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+    completed_at: item.completed_at || null,
+  });
+}
+
+function pickDefined(input) {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
 
 function createItem(input) {
@@ -265,6 +536,69 @@ function render() {
   const screen = screens[route.name] || renderHome;
   screen();
   app.focus({ preventScroll: true });
+}
+
+function renderLoading() {
+  setTitle("Run List");
+  app.innerHTML = empty("Loading Run List...");
+}
+
+function renderAuthScreen() {
+  setTitle("Sign In");
+  backButton.classList.add("hidden");
+  app.innerHTML = `
+    <section class="panel auth-panel">
+      <h2>Sign in to Run List</h2>
+      <p class="muted">Enter your email and Supabase will send a magic link. After sign-in, this app will sync the same supplier and job lists across your devices.</p>
+      <form class="form-grid" id="loginForm">
+        <div class="field full">
+          <label>Email
+            <input name="email" type="email" autocomplete="email" required />
+          </label>
+        </div>
+        <div class="form-actions">
+          <button class="primary-action" type="submit">Send link</button>
+        </div>
+      </form>
+      <p class="muted" id="loginMessage"></p>
+    </section>
+  `;
+
+  document.getElementById("loginForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = document.getElementById("loginMessage");
+    const email = new FormData(event.currentTarget).get("email");
+    message.textContent = "Sending sign-in link...";
+    try {
+      await dataStore.signInWithEmail(email);
+      message.textContent = "Check your email for the sign-in link, then return here.";
+    } catch (error) {
+      message.textContent = error.message;
+    }
+  });
+}
+
+function renderBackendPanel() {
+  const isSupabase = backendStatus.mode === "supabase";
+  return `
+    <section class="status-banner ${isSupabase ? "synced" : "local"}">
+      <span>
+        <strong>${isSupabase ? "Shared backend" : "Local mode"}</strong><br>
+        <span>${escapeHtml(backendStatus.userEmail || backendStatus.message)}</span>
+      </span>
+      ${isSupabase ? '<button class="ghost-button" id="signOutButton" type="button">Sign out</button>' : '<a class="ghost-button" href="#/settings">Setup</a>'}
+    </section>
+  `;
+}
+
+function bindBackendPanel() {
+  const signOutButton = document.getElementById("signOutButton");
+  if (!signOutButton) return;
+  signOutButton.addEventListener("click", async () => {
+    await dataStore.signOut();
+    backendStatus.authRequired = true;
+    renderAuthScreen();
+  });
 }
 
 function getRoute() {
@@ -322,6 +656,7 @@ function renderHome() {
 
   app.innerHTML = `
     <div class="stack">
+      ${renderBackendPanel()}
       <section class="grid-actions" aria-label="Main sections">
         ${homeTile("Run List by Supplier", `${neededCount} active`, "#/suppliers")}
         ${homeTile("Orders", `${orderedCount} waiting`, "#/orders")}
@@ -348,6 +683,7 @@ function renderHome() {
       </section>
     </div>
   `;
+  bindBackendPanel();
 }
 
 function homeTile(label, count, href) {
@@ -562,6 +898,13 @@ function renderSettings() {
     .join("");
 
   app.innerHTML = `
+    <div class="stack">
+      ${renderBackendPanel()}
+      <section class="panel">
+        <h2>Backend Setup</h2>
+        <p class="muted">Create a Supabase project, run <strong>supabase-schema.sql</strong> in the SQL editor, then put the project URL and anon/publishable key into <strong>run-list-config.js</strong>. Keep <strong>requireAuth</strong> on for the shared workshop version.</p>
+      </section>
+    </div>
     <div class="two-col">
       <section class="panel">
         <h2>Add Supplier</h2>
@@ -575,6 +918,7 @@ function renderSettings() {
       <section class="list">${rows}</section>
     </div>
   `;
+  bindBackendPanel();
 
   document.getElementById("supplierForm").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -647,8 +991,17 @@ function renderItemForm(params = {}, id = null) {
 
   const deleteButton = document.getElementById("deleteItem");
   if (deleteButton) {
-    deleteButton.addEventListener("click", () => {
+    deleteButton.addEventListener("click", async () => {
       state.items = state.items.filter((candidate) => candidate.id !== id);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      if (dataStore?.deleteItem) {
+        try {
+          await dataStore.deleteItem(id);
+        } catch (error) {
+          backendStatus.message = `Delete sync error: ${error.message}`;
+          toast(backendStatus.message);
+        }
+      }
       saveState();
       navigate("/suppliers");
     });
