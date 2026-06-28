@@ -1,5 +1,16 @@
 const STORAGE_KEY = "cabinet-ninja-run-list-v1";
-const TABLES = ["suppliers", "jobs", "categories", "items"];
+const TABLES = [
+  "suppliers",
+  "jobs",
+  "categories",
+  "items",
+  "checklist_templates",
+  "checklist_template_sections",
+  "checklist_template_items",
+  "job_checklists",
+  "job_checklist_sections",
+  "job_checklist_items",
+];
 
 const STATUS_OPTIONS = [
   ["needed", "Needed"],
@@ -24,6 +35,32 @@ const PRIORITY_OPTIONS = [
 ];
 
 const COMPLETED_STATUSES = new Set(["picked_up", "done", "cancelled"]);
+
+const CHECKLIST_TYPE_OPTIONS = [
+  ["packing", "Packing"],
+  ["qc_completion", "QC completion"],
+  ["site_arrival", "Site arrival"],
+  ["build_readiness", "Build readiness"],
+  ["measure_up", "Measure-up"],
+  ["delivery", "Delivery"],
+  ["custom", "Custom"],
+];
+
+const CHECKLIST_STATUS_OPTIONS = [
+  ["not_started", "Not started"],
+  ["in_progress", "In progress"],
+  ["complete", "Complete"],
+  ["archived", "Archived"],
+];
+
+const ISSUE_STATUS_OPTIONS = [
+  ["none", "No issue"],
+  ["issue_found", "Issue found"],
+  ["to_fix", "To fix"],
+  ["fixed", "Fixed"],
+  ["accepted", "Accepted"],
+  ["not_applicable", "Not applicable"],
+];
 
 const DEFAULT_DATA = {
   suppliers: [
@@ -64,6 +101,12 @@ const DEFAULT_DATA = {
     category("Install items"),
   ],
   items: [],
+  checklist_templates: [],
+  checklist_template_sections: [],
+  checklist_template_items: [],
+  job_checklists: [],
+  job_checklist_sections: [],
+  job_checklist_items: [],
 };
 
 const seedItems = [
@@ -201,6 +244,46 @@ function category(category_name) {
   };
 }
 
+function checklistTemplate(id, name, type, description = "") {
+  const now = nowIso();
+  return {
+    id,
+    name,
+    type,
+    description,
+    active: true,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function checklistTemplateSection(id, template_id, section_name, sort_order) {
+  const now = nowIso();
+  return {
+    id,
+    template_id,
+    section_name,
+    sort_order,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function checklistTemplateItem(id, section_id, item_text, sort_order, options = {}) {
+  const now = nowIso();
+  return {
+    id,
+    section_id,
+    item_text,
+    sort_order,
+    required: options.required !== false,
+    default_notes: options.default_notes || "",
+    allow_photo: Boolean(options.allow_photo),
+    created_at: now,
+    updated_at: now,
+  };
+}
+
 function uid(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -211,6 +294,7 @@ function nowIso() {
 
 function buildSeedState() {
   const data = JSON.parse(JSON.stringify(DEFAULT_DATA));
+  Object.assign(data, buildDefaultChecklistTemplateState());
   const supplierByName = Object.fromEntries(data.suppliers.map((item) => [item.supplier_name, item.id]));
   const jobByName = Object.fromEntries(data.jobs.map((item) => [item.job_name, item.id]));
   const categoryByName = Object.fromEntries(data.categories.map((item) => [item.category_name, item.id]));
@@ -221,6 +305,185 @@ function buildSeedState() {
     category_id: categoryByName[item.category],
   }));
   return data;
+}
+
+function buildDefaultChecklistTemplateState() {
+  const templates = [
+    checklistTemplate("tmpl_packing_standard_install", "Standard Kitchen/Laundry Install Packing Checklist", "packing", "Workshop packing list before leaving for install."),
+    checklistTemplate("tmpl_qc_standard_install", "Standard Kitchen/Laundry QC Completion Checklist", "qc_completion", "Site completion and handover quality checklist."),
+  ];
+  const sections = [];
+  const items = [];
+
+  addTemplateSections(sections, items, templates[0].id, [
+    ["Job information", [
+      "Final drawings loaded/printed",
+      "Site measurements checked",
+      "Client notes checked",
+      "Appliance specs checked if relevant",
+      "Sink/tap cutout specs checked if relevant",
+      "Access/site instructions checked",
+      "Job contact details available",
+    ]],
+    ["Cabinets and job parts", [
+      "Base cabinets loaded",
+      "Wall cabinets loaded",
+      "Tall cabinets loaded if required",
+      "Doors loaded and protected",
+      "Drawer fronts loaded and protected",
+      "Drawers loaded",
+      "End panels loaded",
+      "Fillers/scribers loaded",
+      "Toe kicks/kickboards loaded",
+      "Shelves loaded",
+      "Hardware packed",
+      "Handles packed",
+      "Hinges packed",
+      "Drawer runners packed",
+      "Cover caps packed",
+      "Touch-up parts packed",
+    ]],
+    ["Benchtop/splashback/sink", [
+      "Benchtop loaded and protected",
+      "Benchtop joins/hardware packed if required",
+      "Upstands/splashback loaded if required",
+      "Sink loaded if supplied by Cabinet Ninja",
+      "Tap/mixer loaded if supplied by Cabinet Ninja",
+      "Waste kit loaded if required",
+      "Sink clips/sealant packed",
+      "Cutout templates/specs checked if required",
+    ]],
+    ["Install consumables", [
+      "Screws",
+      "Packers/shims",
+      "Brackets",
+      "Wall plugs/fixings",
+      "Silicone/sealant",
+      "Construction adhesive",
+      "Masking tape",
+      "Rags",
+      "Cleaning spray",
+      "Drill bits",
+      "Driver bits",
+      "Jigsaw blades",
+      "Multi-tool blades",
+      "Pencils/markers",
+      "Caulking gun",
+      "Rubbish bags",
+    ]],
+    ["Tools", [
+      "Drill/driver",
+      "Impact driver",
+      "Batteries",
+      "Battery charger",
+      "Track saw/circular saw",
+      "Jigsaw",
+      "Multi-tool",
+      "Laser level",
+      "Spirit level",
+      "Tape measure",
+      "Clamps",
+      "Scribing tools",
+      "Vacuum",
+      "Extension lead",
+      "Work lights",
+      "Saw horses",
+      "Router/trimmer if required",
+    ]],
+    ["Trailer/load check", [
+      "Cabinets secured",
+      "Doors/fronts protected",
+      "Benchtop protected",
+      "Fragile parts secured",
+      "Tools loaded",
+      "Consumables loaded",
+      "Drop sheets loaded",
+      "Trailer lights checked",
+      "Straps/tie-downs checked",
+    ]],
+  ]);
+
+  addTemplateSections(sections, items, templates[1].id, [
+    ["Cabinet alignment", [
+      "Base cabinets level",
+      "Wall cabinets level",
+      "Tall cabinets plumb",
+      "Cabinet gaps consistent",
+      "Doors aligned",
+      "Drawer fronts aligned",
+      "End panels tidy",
+      "Fillers/scribers tidy",
+      "Toe kicks fitted properly",
+      "No obvious chips/scratches",
+    ]],
+    ["Doors and drawers", [
+      "All doors open/close correctly",
+      "Hinges adjusted",
+      "Drawers open/close smoothly",
+      "Soft-close working",
+      "Handles fitted straight",
+      "Handle spacing consistent",
+      "No rubbing",
+      "No missing screws/caps",
+    ]],
+    ["Benchtop and sealing", [
+      "Benchtop level",
+      "Benchtop joins tight if applicable",
+      "Cutouts clean",
+      "Edges tidy",
+      "Upstands/splashback fitted if applicable",
+      "Silicone neat",
+      "No visible benchtop damage",
+      "Sink/tap area sealed if applicable",
+    ]],
+    ["Appliances and service openings", [
+      "Oven opening correct",
+      "Dishwasher space correct",
+      "Rangehood position/opening correct",
+      "Fridge space correct",
+      "Sink fitted if included",
+      "Tap hole/cutout correct",
+      "Waste/plumbing access clear",
+      "Electrical/plumbing exclusions noted if not completed by Cabinet Ninja",
+    ]],
+    ["Site finish", [
+      "Cabinets wiped down",
+      "Benchtop cleaned",
+      "Dust vacuumed",
+      "Rubbish removed or stacked as agreed",
+      "Old kitchen/removal exclusions handled as agreed",
+      "Leftover parts labelled",
+      "Client-supplied parts returned/left tidy",
+      "Before/after photos taken",
+    ]],
+    ["Client handover", [
+      "Client walked through job if available",
+      "Minor defects/issues recorded",
+      "Exclusions explained",
+      "Future trades noted",
+      "Care/warranty notes sent or ready to send",
+      "Final invoice/payment trigger ready",
+      "Job can be marked complete",
+    ]],
+  ]);
+
+  return {
+    checklist_templates: templates,
+    checklist_template_sections: sections,
+    checklist_template_items: items,
+  };
+}
+
+function addTemplateSections(sections, items, templateId, sectionSpecs) {
+  sectionSpecs.forEach(([sectionName, sectionItems], sectionIndex) => {
+    const sectionId = `${templateId}_sec_${sectionIndex + 1}`;
+    sections.push(checklistTemplateSection(sectionId, templateId, sectionName, sectionIndex + 1));
+    sectionItems.forEach((itemText, itemIndex) => {
+      items.push(checklistTemplateItem(`${sectionId}_item_${itemIndex + 1}`, sectionId, itemText, itemIndex + 1, {
+        allow_photo: /photos|damage|scratches|chips/i.test(itemText),
+      }));
+    });
+  });
 }
 
 function loadLocalState(persistSeed = true) {
@@ -243,7 +506,7 @@ function loadLocalState(persistSeed = true) {
 }
 
 function normalizeState(data) {
-  return {
+  const normalized = {
     suppliers: (data.suppliers || []).map((item) => ({
       default_contact: "",
       notes: "",
@@ -287,7 +550,84 @@ function normalizeState(data) {
       product_link: item.product_link || "",
       photo_url: item.photo_url || "",
     })),
+    checklist_templates: (data.checklist_templates || []).map((item) => ({
+      description: "",
+      active: true,
+      ...item,
+      description: item.description || "",
+      active: item.active !== false,
+    })),
+    checklist_template_sections: (data.checklist_template_sections || []).map((item) => ({
+      sort_order: 0,
+      ...item,
+      section_name: item.section_name || "",
+      sort_order: Number(item.sort_order || 0),
+    })),
+    checklist_template_items: (data.checklist_template_items || []).map((item) => ({
+      required: true,
+      default_notes: "",
+      allow_photo: false,
+      sort_order: 0,
+      ...item,
+      item_text: item.item_text || "",
+      required: item.required !== false,
+      default_notes: item.default_notes || "",
+      allow_photo: Boolean(item.allow_photo),
+      sort_order: Number(item.sort_order || 0),
+    })),
+    job_checklists: (data.job_checklists || []).map((item) => ({
+      template_id: "",
+      status: "not_started",
+      completed_at: null,
+      override_note: "",
+      ...item,
+      template_id: item.template_id || "",
+      checklist_type: item.checklist_type || item.type || "custom",
+      title: item.title || readable(item.checklist_type || "custom"),
+      status: item.status || "not_started",
+      completed_at: item.completed_at || null,
+      override_note: item.override_note || "",
+    })),
+    job_checklist_sections: (data.job_checklist_sections || []).map((item) => ({
+      sort_order: 0,
+      ...item,
+      section_name: item.section_name || "",
+      sort_order: Number(item.sort_order || 0),
+    })),
+    job_checklist_items: (data.job_checklist_items || []).map((item) => ({
+      checked: false,
+      checked_at: null,
+      checked_by: "",
+      required: true,
+      notes: "",
+      photo_url: "",
+      issue_status: "none",
+      sort_order: 0,
+      ...item,
+      checked: Boolean(item.checked),
+      checked_at: item.checked_at || null,
+      checked_by: item.checked_by || "",
+      required: item.required !== false,
+      notes: item.notes || "",
+      photo_url: item.photo_url || "",
+      issue_status: item.issue_status || "none",
+      sort_order: Number(item.sort_order || 0),
+    })),
   };
+  ensureDefaultChecklistTemplates(normalized);
+  return normalized;
+}
+
+function ensureDefaultChecklistTemplates(data) {
+  const defaults = buildDefaultChecklistTemplateState();
+  const existingTemplateIds = new Set((data.checklist_templates || []).map((item) => item.id));
+  defaults.checklist_templates.forEach((templateItem) => {
+    if (existingTemplateIds.has(templateItem.id)) return;
+    data.checklist_templates.push(templateItem);
+    data.checklist_template_sections.push(...defaults.checklist_template_sections.filter((section) => section.template_id === templateItem.id));
+    const addedSectionIds = new Set(data.checklist_template_sections.filter((section) => section.template_id === templateItem.id).map((section) => section.id));
+    data.checklist_template_items.push(...defaults.checklist_template_items.filter((item) => addedSectionIds.has(item.section_id)));
+  });
 }
 
 function saveState(nextState = state) {
@@ -341,14 +681,42 @@ function createSupabaseStore(config) {
   }
 
   async function loadTables() {
-    const [suppliers, jobs, categories, items] = await Promise.all([
+    const [
+      suppliers,
+      jobs,
+      categories,
+      items,
+      checklistTemplates,
+      checklistTemplateSections,
+      checklistTemplateItems,
+      jobChecklists,
+      jobChecklistSections,
+      jobChecklistItems,
+    ] = await Promise.all([
       client.from("suppliers").select("*").order("supplier_name"),
       client.from("jobs").select("*").order("job_name"),
       client.from("categories").select("*").order("category_name"),
       client.from("items").select("*").order("created_at", { ascending: false }),
+      client.from("checklist_templates").select("*").order("name"),
+      client.from("checklist_template_sections").select("*").order("sort_order"),
+      client.from("checklist_template_items").select("*").order("sort_order"),
+      client.from("job_checklists").select("*").order("created_at", { ascending: false }),
+      client.from("job_checklist_sections").select("*").order("sort_order"),
+      client.from("job_checklist_items").select("*").order("sort_order"),
     ]);
 
-    const result = { suppliers, jobs, categories, items };
+    const result = {
+      suppliers,
+      jobs,
+      categories,
+      items,
+      checklist_templates: checklistTemplates,
+      checklist_template_sections: checklistTemplateSections,
+      checklist_template_items: checklistTemplateItems,
+      job_checklists: jobChecklists,
+      job_checklist_sections: jobChecklistSections,
+      job_checklist_items: jobChecklistItems,
+    };
     for (const key of TABLES) {
       if (result[key].error) throw result[key].error;
     }
@@ -358,6 +726,12 @@ function createSupabaseStore(config) {
       jobs: jobs.data || [],
       categories: categories.data || [],
       items: items.data || [],
+      checklist_templates: checklistTemplates.data || [],
+      checklist_template_sections: checklistTemplateSections.data || [],
+      checklist_template_items: checklistTemplateItems.data || [],
+      job_checklists: jobChecklists.data || [],
+      job_checklist_sections: jobChecklistSections.data || [],
+      job_checklist_items: jobChecklistItems.data || [],
     });
   }
 
@@ -377,6 +751,12 @@ function createSupabaseStore(config) {
     await upsertRows("jobs", normalized.jobs.map(cleanJob));
     await upsertRows("categories", normalized.categories.map(cleanCategory));
     await upsertRows("items", normalized.items.map(cleanItem));
+    await upsertRows("checklist_templates", normalized.checklist_templates.map(cleanChecklistTemplate));
+    await upsertRows("checklist_template_sections", normalized.checklist_template_sections.map(cleanChecklistTemplateSection));
+    await upsertRows("checklist_template_items", normalized.checklist_template_items.map(cleanChecklistTemplateItem));
+    await upsertRows("job_checklists", normalized.job_checklists.map(cleanJobChecklist));
+    await upsertRows("job_checklist_sections", normalized.job_checklist_sections.map(cleanJobChecklistSection));
+    await upsertRows("job_checklist_items", normalized.job_checklist_items.map(cleanJobChecklistItem));
   }
 
   async function upsertRows(table, rows) {
@@ -411,6 +791,10 @@ function createSupabaseStore(config) {
     saveState: saveFullState,
     async deleteItem(id) {
       const { error } = await client.from("items").delete().eq("id", id);
+      if (error) throw error;
+    },
+    async deleteChecklistTemplateItem(id) {
+      const { error } = await client.from("checklist_template_items").delete().eq("id", id);
       if (error) throw error;
     },
     async signInWithEmail(email) {
@@ -484,6 +868,85 @@ function cleanItem(item) {
   });
 }
 
+function cleanChecklistTemplate(item) {
+  return pickDefined({
+    id: item.id,
+    name: item.name,
+    type: item.type || "custom",
+    description: item.description || null,
+    active: item.active !== false,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
+function cleanChecklistTemplateSection(item) {
+  return pickDefined({
+    id: item.id,
+    template_id: item.template_id,
+    section_name: item.section_name,
+    sort_order: Number(item.sort_order || 0),
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
+function cleanChecklistTemplateItem(item) {
+  return pickDefined({
+    id: item.id,
+    section_id: item.section_id,
+    item_text: item.item_text,
+    sort_order: Number(item.sort_order || 0),
+    required: item.required !== false,
+    default_notes: item.default_notes || null,
+    allow_photo: Boolean(item.allow_photo),
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
+function cleanJobChecklist(item) {
+  return pickDefined({
+    id: item.id,
+    job_id: item.job_id,
+    template_id: item.template_id || null,
+    checklist_type: item.checklist_type || "custom",
+    title: item.title,
+    status: item.status || "not_started",
+    override_note: item.override_note || null,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+    completed_at: item.completed_at || null,
+  });
+}
+
+function cleanJobChecklistSection(item) {
+  return pickDefined({
+    id: item.id,
+    job_checklist_id: item.job_checklist_id,
+    section_name: item.section_name,
+    sort_order: Number(item.sort_order || 0),
+  });
+}
+
+function cleanJobChecklistItem(item) {
+  return pickDefined({
+    id: item.id,
+    job_checklist_section_id: item.job_checklist_section_id,
+    item_text: item.item_text,
+    checked: Boolean(item.checked),
+    checked_at: item.checked_at || null,
+    checked_by: item.checked_by || null,
+    required: item.required !== false,
+    notes: item.notes || null,
+    photo_url: item.photo_url || null,
+    issue_status: item.issue_status || "none",
+    sort_order: Number(item.sort_order || 0),
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
 function pickDefined(input) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
@@ -525,6 +988,9 @@ function render() {
     supplier: () => renderSupplierDetail(route.id),
     jobs: renderJobs,
     job: () => renderJobDetail(route.id),
+    checklist: () => renderChecklistDetail(route.id),
+    templates: renderChecklistTemplates,
+    template: () => renderTemplateEditor(route.id),
     orders: renderOrders,
     add: () => renderItemForm(route.params),
     edit: () => renderItemForm(route.params, route.id),
@@ -608,6 +1074,8 @@ function getRoute() {
   const params = Object.fromEntries(new URLSearchParams(queryString));
 
   if (!parts.length) return { name: "home", section: "home", params };
+  if (parts[0] === "checklists" && parts[1]) return { name: "checklist", section: "jobs", id: parts[1], params };
+  if (parts[0] === "templates" && parts[1]) return { name: "template", section: "templates", id: parts[1], params };
   if (parts[0] === "suppliers" && parts[1]) return { name: "supplier", section: "suppliers", id: parts[1], params };
   if (parts[0] === "jobs" && parts[1]) return { name: "job", section: "jobs", id: parts[1], params };
   if (parts[0] === "edit" && parts[1]) return { name: "edit", id: parts[1], params };
@@ -663,6 +1131,7 @@ function renderHome() {
         ${homeTile("Jobs", "Materials by job", "#/jobs")}
         ${homeTile("Add Item", "Quick entry", "#/add")}
         ${homeTile("Search", "Find anything", "#/search")}
+        ${homeTile("Checklist Templates", "Packing and QC", "#/templates")}
       </section>
 
       <section class="panel">
@@ -766,11 +1235,17 @@ function renderJobs() {
     .sort((a, b) => labelForJob(a).localeCompare(labelForJob(b)))
     .map((jobItem) => {
       const count = activeItems().filter((item) => item.job_id === jobItem.id).length;
+      const packing = latestChecklistForType(jobItem.id, "packing");
+      const qc = latestChecklistForType(jobItem.id, "qc_completion");
+      const checklistMeta = [
+        packing ? `Packing ${checklistProgress(packing.id).percent}%` : "Packing not started",
+        qc ? `QC ${checklistProgress(qc.id).percent}%` : "QC not started",
+      ].join(" - ");
       return `
         <a class="list-link" href="#/jobs/${jobItem.id}">
           <span>
             <strong>${escapeHtml(labelForJob(jobItem))}</strong><br>
-            <span class="muted">${escapeHtml([jobItem.job_number, jobItem.location].filter(Boolean).join(" - ") || "Job")}</span>
+            <span class="muted">${escapeHtml([jobItem.job_number, jobItem.location, checklistMeta].filter(Boolean).join(" - ") || "Job")}</span>
           </span>
           <span class="count-pill">${count}</span>
         </a>
@@ -797,13 +1272,23 @@ function renderJobDetail(id) {
   setTitle(labelForJob(jobItem));
   const items = activeItems().filter((item) => item.job_id === id).sort(sortBySupplierThenName);
   const grouped = groupBy(items, (item) => supplierById(item.supplier_id)?.supplier_name || "No supplier");
+  const qcWarning = jobNeedsQcWarning(id);
 
   app.innerHTML = `
     <div class="stack">
       <div class="toolbar">
         <a class="primary-action" href="#/add?job_id=${encodeURIComponent(id)}">Add for job</a>
         <a class="ghost-button" href="#/history?job_id=${encodeURIComponent(id)}">Completed</a>
+        <button class="ghost-button" id="completeJobButton" type="button">${jobItem.status === "complete" ? "Reopen job" : "Mark job complete"}</button>
       </div>
+      ${qcWarning ? `<section class="warning-panel"><strong>QC checklist incomplete.</strong><br><span>Complete QC or use a checklist override before marking this job complete.</span></section>` : ""}
+      ${renderJobChecklistArea(id)}
+      <section>
+        <div class="section-heading">
+          <h2>Outstanding Run List Items</h2>
+          <span class="count-pill">${items.length}</span>
+        </div>
+      </section>
       ${Object.entries(grouped).map(([supplierName, supplierItems]) => `
         <section>
           <div class="section-heading">
@@ -815,6 +1300,563 @@ function renderJobDetail(id) {
       `).join("") || empty("No outstanding items for this job.")}
     </div>
   `;
+
+  bindJobChecklistArea(id);
+  document.getElementById("completeJobButton").addEventListener("click", () => toggleJobComplete(id));
+}
+
+function renderJobChecklistArea(jobId) {
+  const checklists = jobChecklistsForJob(jobId);
+  const packing = latestChecklistForType(jobId, "packing");
+  const qc = latestChecklistForType(jobId, "qc_completion");
+  const templates = state.checklist_templates
+    .filter((template) => template.active)
+    .sort((a, b) => checklistTypeSort(a.type) - checklistTypeSort(b.type) || a.name.localeCompare(b.name));
+
+  return `
+    <section class="panel checklist-summary">
+      <div class="section-heading">
+        <h2>Checklists</h2>
+        <span class="count-pill">${checklists.length}</span>
+      </div>
+      <div class="list">
+        ${renderChecklistSummaryRow("Packing Checklist", packing, "packing")}
+        ${renderChecklistSummaryRow("QC Completion Checklist", qc, "qc_completion")}
+      </div>
+      <form class="inline-form" id="generateChecklistForm">
+        <label class="field full">Create checklist
+          <select name="template_id" required>
+            <option value="">Choose template</option>
+            ${templates.map((template) => `<option value="${escapeAttr(template.id)}">${escapeHtml(template.name)}</option>`).join("")}
+          </select>
+        </label>
+        <button class="primary-action" type="submit">Create</button>
+      </form>
+      <a class="ghost-button full-width" href="#/templates">Manage templates</a>
+    </section>
+  `;
+}
+
+function renderChecklistSummaryRow(label, checklist, type) {
+  const progress = checklist ? checklistProgress(checklist.id) : null;
+  const warning = checklist && checklist.status !== "complete" && progress.totalRequired > 0;
+  return `
+    <div class="list-link ${warning ? "warning-row" : ""}">
+      <span>
+        <strong>${escapeHtml(label)}</strong><br>
+        <span class="muted">${checklist ? `${progress.checkedRequired}/${progress.totalRequired} required complete - ${readable(checklist.status)}` : "Not started"}</span>
+      </span>
+      ${checklist ? `<a class="ghost-button" href="#/checklists/${checklist.id}">Open</a>` : `<span class="status-pill">${escapeHtml(readable(type))}</span>`}
+    </div>
+  `;
+}
+
+function bindJobChecklistArea(jobId) {
+  const form = document.getElementById("generateChecklistForm");
+  if (!form) return;
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const templateId = new FormData(form).get("template_id");
+    if (!templateId) return;
+    const checklist = generateChecklistFromTemplate(jobId, templateId);
+    saveState();
+    navigate(`/checklists/${checklist.id}`);
+  });
+}
+
+function toggleJobComplete(jobId) {
+  const jobItem = jobById(jobId);
+  if (!jobItem) return;
+  if (jobItem.status === "complete") {
+    jobItem.status = "active";
+    jobItem.updated_at = nowIso();
+    saveState();
+    render();
+    return;
+  }
+  if (jobNeedsQcWarning(jobId)) {
+    const ok = window.confirm("QC checklist is not complete. Mark this job complete anyway?");
+    if (!ok) return;
+  }
+  jobItem.status = "complete";
+  jobItem.updated_at = nowIso();
+  saveState();
+  render();
+}
+
+function renderChecklistDetail(id) {
+  const checklist = jobChecklistById(id);
+  if (!checklist) {
+    renderNotFound("Checklist not found.");
+    return;
+  }
+  const jobItem = jobById(checklist.job_id);
+  const progress = checklistProgress(id);
+  const sections = jobChecklistSectionsForChecklist(id);
+  const outstanding = activeItems().filter((item) => item.job_id === checklist.job_id).sort(sortBySupplierThenName);
+  const incompleteRequired = Math.max(0, progress.totalRequired - progress.checkedRequired);
+
+  setTitle(checklist.title);
+  app.innerHTML = `
+    <div class="stack checklist-detail">
+      <section class="panel">
+        <p class="muted">${escapeHtml(jobItem ? labelForJob(jobItem) : "No job")}</p>
+        <div class="progress-header">
+          <div>
+            <strong>${progress.checkedRequired}/${progress.totalRequired} required</strong><br>
+            <span class="muted">${escapeHtml(readable(checklist.status))}${checklist.completed_at ? ` - completed ${formatDateTime(checklist.completed_at)}` : ""}</span>
+          </div>
+          <span class="count-pill">${progress.percent}%</span>
+        </div>
+        <div class="progress-track" aria-label="Checklist progress">
+          <span style="width: ${progress.percent}%"></span>
+        </div>
+        ${checklist.override_note ? `<p class="override-note"><strong>Override:</strong> ${escapeHtml(checklist.override_note)}</p>` : ""}
+      </section>
+
+      ${outstanding.length ? `
+        <section class="warning-panel">
+          <strong>Outstanding Run List items for this job</strong>
+          <div class="compact-list">
+            ${outstanding.map((item) => `
+              <div>${escapeHtml(item.item_name)} — ${escapeHtml(supplierById(item.supplier_id)?.supplier_name || "No supplier")} — ${escapeHtml(readable(item.status))}</div>
+            `).join("")}
+          </div>
+        </section>
+      ` : ""}
+
+      <div class="toolbar">
+        <button class="primary-action" id="completeChecklist" type="button">${checklist.status === "complete" ? "Checklist complete" : "Mark complete"}</button>
+        ${incompleteRequired ? '<button class="ghost-button" id="overrideChecklist" type="button">Complete with override</button>' : ""}
+        <button class="ghost-button" id="toggleCheckedItems" type="button">Hide checked</button>
+      </div>
+
+      ${sections.map((section) => renderChecklistSection(section)).join("") || empty("No checklist items yet.")}
+    </div>
+  `;
+
+  bindChecklistDetail(id);
+}
+
+function renderChecklistSection(section) {
+  const items = jobChecklistItemsForSection(section.id);
+  const checkedCount = items.filter((item) => item.checked).length;
+  return `
+    <details class="checklist-section" open>
+      <summary>
+        <span>${escapeHtml(section.section_name)}</span>
+        <span class="count-pill">${checkedCount}/${items.length}</span>
+      </summary>
+      <div class="checklist-items">
+        ${items.map((item) => renderChecklistItem(item)).join("")}
+      </div>
+    </details>
+  `;
+}
+
+function renderChecklistItem(item) {
+  return `
+    <article class="checklist-item ${item.checked ? "checked" : ""}" data-checklist-item-id="${escapeAttr(item.id)}">
+      <button class="tick-button checklist-toggle" type="button" aria-label="${item.checked ? "Untick item" : "Tick item"}"></button>
+      <div class="checklist-item-main">
+        <div class="item-title-line">
+          <h3>${escapeHtml(item.item_text)}</h3>
+          ${item.required ? '<span class="status-pill">Required</span>' : '<span class="status-pill optional">Optional</span>'}
+        </div>
+        <div class="item-controls checklist-controls">
+          <label class="field">Notes
+            <textarea class="checklist-note" rows="2">${escapeHtml(item.notes || "")}</textarea>
+          </label>
+          <label class="field">Photo/link
+            <input class="checklist-photo" type="url" value="${escapeAttr(item.photo_url || "")}" placeholder="Paste photo URL" />
+          </label>
+          <label class="field">Issue
+            <select class="checklist-issue">
+              ${ISSUE_STATUS_OPTIONS.map(([value, label]) => `<option value="${value}" ${item.issue_status === value ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function bindChecklistDetail(checklistId) {
+  document.querySelectorAll("[data-checklist-item-id]").forEach((row) => {
+    const item = jobChecklistItemById(row.dataset.checklistItemId);
+    if (!item) return;
+    row.querySelector(".checklist-toggle").addEventListener("click", () => {
+      item.checked = !item.checked;
+      item.checked_at = item.checked ? nowIso() : null;
+      item.checked_by = item.checked ? backendStatus.userEmail || "" : "";
+      updateChecklistStatus(checklistId);
+      saveState();
+      renderChecklistDetail(checklistId);
+    });
+    row.querySelector(".checklist-note").addEventListener("change", (event) => {
+      item.notes = event.target.value;
+      item.updated_at = nowIso();
+      saveState();
+    });
+    row.querySelector(".checklist-photo").addEventListener("change", (event) => {
+      item.photo_url = event.target.value;
+      item.updated_at = nowIso();
+      saveState();
+    });
+    row.querySelector(".checklist-issue").addEventListener("change", (event) => {
+      item.issue_status = event.target.value;
+      item.updated_at = nowIso();
+      saveState();
+    });
+  });
+
+  document.getElementById("completeChecklist")?.addEventListener("click", () => completeChecklist(checklistId, false));
+  document.getElementById("overrideChecklist")?.addEventListener("click", () => completeChecklist(checklistId, true));
+  document.getElementById("toggleCheckedItems")?.addEventListener("click", (event) => {
+    app.classList.toggle("hide-checked-items");
+    event.currentTarget.textContent = app.classList.contains("hide-checked-items") ? "Show checked" : "Hide checked";
+  });
+}
+
+function completeChecklist(checklistId, override) {
+  const checklist = jobChecklistById(checklistId);
+  if (!checklist) return;
+  const progress = checklistProgress(checklistId);
+  if (progress.checkedRequired < progress.totalRequired && !override) {
+    toast("Required items are still unchecked.");
+    return;
+  }
+  if (override && progress.checkedRequired < progress.totalRequired) {
+    const note = window.prompt("Override note required", checklist.override_note || "");
+    if (!note?.trim()) return;
+    checklist.override_note = note.trim();
+  }
+  checklist.status = "complete";
+  checklist.completed_at = checklist.completed_at || nowIso();
+  checklist.updated_at = nowIso();
+  saveState();
+  renderChecklistDetail(checklistId);
+}
+
+function generateChecklistFromTemplate(jobId, templateId) {
+  const template = checklistTemplateById(templateId);
+  if (!template) throw new Error("Template not found.");
+  const now = nowIso();
+  const checklist = {
+    id: uid("jcl"),
+    job_id: jobId,
+    template_id: template.id,
+    checklist_type: template.type,
+    title: template.name,
+    status: "not_started",
+    override_note: "",
+    created_at: now,
+    updated_at: now,
+    completed_at: null,
+  };
+  state.job_checklists.unshift(checklist);
+
+  templateSectionsForTemplate(template.id).forEach((templateSection) => {
+    const section = {
+      id: uid("jsec"),
+      job_checklist_id: checklist.id,
+      section_name: templateSection.section_name,
+      sort_order: templateSection.sort_order,
+    };
+    state.job_checklist_sections.push(section);
+    templateItemsForSection(templateSection.id).forEach((templateItem) => {
+      state.job_checklist_items.push({
+        id: uid("jci"),
+        job_checklist_section_id: section.id,
+        item_text: templateItem.item_text,
+        checked: false,
+        checked_at: null,
+        checked_by: "",
+        required: templateItem.required !== false,
+        notes: templateItem.default_notes || "",
+        photo_url: "",
+        issue_status: "none",
+        sort_order: templateItem.sort_order,
+        created_at: now,
+        updated_at: now,
+      });
+    });
+  });
+
+  return checklist;
+}
+
+function updateChecklistStatus(checklistId) {
+  const checklist = jobChecklistById(checklistId);
+  if (!checklist) return;
+  const items = jobChecklistItemsForChecklist(checklistId);
+  const progress = checklistProgress(checklistId);
+  const anyChecked = items.some((item) => item.checked);
+  checklist.status = progress.totalRequired > 0 && progress.checkedRequired >= progress.totalRequired
+    ? "complete"
+    : anyChecked ? "in_progress" : "not_started";
+  checklist.completed_at = checklist.status === "complete" ? checklist.completed_at || nowIso() : null;
+  if (checklist.status !== "complete") checklist.override_note = "";
+  checklist.updated_at = nowIso();
+}
+
+function checklistProgress(checklistId) {
+  const items = jobChecklistItemsForChecklist(checklistId);
+  const required = items.filter((item) => item.required);
+  const totalRequired = required.length;
+  const checkedRequired = required.filter((item) => item.checked).length;
+  const percent = totalRequired ? Math.round((checkedRequired / totalRequired) * 100) : 100;
+  return {
+    totalRequired,
+    checkedRequired,
+    totalItems: items.length,
+    checkedItems: items.filter((item) => item.checked).length,
+    percent,
+  };
+}
+
+function jobNeedsQcWarning(jobId) {
+  const qc = latestChecklistForType(jobId, "qc_completion");
+  return !qc || qc.status !== "complete";
+}
+
+function checklistTypeSort(type) {
+  return { packing: 0, qc_completion: 1, site_arrival: 2, build_readiness: 3, measure_up: 4, delivery: 5, custom: 6 }[type] ?? 99;
+}
+
+function checklistTemplateById(id) {
+  return state.checklist_templates.find((item) => item.id === id);
+}
+
+function jobChecklistById(id) {
+  return state.job_checklists.find((item) => item.id === id);
+}
+
+function jobChecklistItemById(id) {
+  return state.job_checklist_items.find((item) => item.id === id);
+}
+
+function templateSectionsForTemplate(templateId) {
+  return state.checklist_template_sections
+    .filter((item) => item.template_id === templateId)
+    .sort((a, b) => a.sort_order - b.sort_order || a.section_name.localeCompare(b.section_name));
+}
+
+function templateItemsForSection(sectionId) {
+  return state.checklist_template_items
+    .filter((item) => item.section_id === sectionId)
+    .sort((a, b) => a.sort_order - b.sort_order || a.item_text.localeCompare(b.item_text));
+}
+
+function jobChecklistsForJob(jobId) {
+  return state.job_checklists
+    .filter((item) => item.job_id === jobId && item.status !== "archived")
+    .sort((a, b) => checklistTypeSort(a.checklist_type) - checklistTypeSort(b.checklist_type) || (b.created_at || "").localeCompare(a.created_at || ""));
+}
+
+function latestChecklistForType(jobId, type) {
+  return jobChecklistsForJob(jobId).find((item) => item.checklist_type === type);
+}
+
+function jobChecklistSectionsForChecklist(checklistId) {
+  return state.job_checklist_sections
+    .filter((item) => item.job_checklist_id === checklistId)
+    .sort((a, b) => a.sort_order - b.sort_order || a.section_name.localeCompare(b.section_name));
+}
+
+function jobChecklistItemsForSection(sectionId) {
+  return state.job_checklist_items
+    .filter((item) => item.job_checklist_section_id === sectionId)
+    .sort((a, b) => a.sort_order - b.sort_order || a.item_text.localeCompare(b.item_text));
+}
+
+function jobChecklistItemsForChecklist(checklistId) {
+  const sectionIds = new Set(jobChecklistSectionsForChecklist(checklistId).map((section) => section.id));
+  return state.job_checklist_items.filter((item) => sectionIds.has(item.job_checklist_section_id));
+}
+
+function renderChecklistTemplates() {
+  setTitle("Checklist Templates");
+  const templates = state.checklist_templates
+    .sort((a, b) => checklistTypeSort(a.type) - checklistTypeSort(b.type) || a.name.localeCompare(b.name));
+  app.innerHTML = `
+    <div class="stack">
+      <section class="panel">
+        <h2>Create Template</h2>
+        <form class="form-grid" id="templateCreateForm">
+          ${field("Template name", "name", "text", "", "full", true)}
+          ${selectField("Type", "type", "custom", CHECKLIST_TYPE_OPTIONS)}
+          ${textareaField("Description", "description", "", "full")}
+          <div class="form-actions">
+            <button class="primary-action" type="submit">Create</button>
+          </div>
+        </form>
+      </section>
+      <section class="list">
+        ${templates.map((template) => {
+          const sectionCount = templateSectionsForTemplate(template.id).length;
+          const itemCount = templateSectionsForTemplate(template.id).reduce((count, section) => count + templateItemsForSection(section.id).length, 0);
+          return `
+            <a class="list-link" href="#/templates/${template.id}">
+              <span>
+                <strong>${escapeHtml(template.name)}</strong><br>
+                <span class="muted">${escapeHtml(readable(template.type))} - ${sectionCount} sections - ${itemCount} items${template.active ? "" : " - hidden"}</span>
+              </span>
+              <span class="count-pill">${itemCount}</span>
+            </a>
+          `;
+        }).join("") || empty("No templates yet.")}
+      </section>
+    </div>
+  `;
+
+  document.getElementById("templateCreateForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const template = checklistTemplate(uid("tmpl"), form.get("name"), form.get("type"), form.get("description"));
+    state.checklist_templates.push(template);
+    saveState();
+    navigate(`/templates/${template.id}`);
+  });
+}
+
+function renderTemplateEditor(id) {
+  const template = checklistTemplateById(id);
+  if (!template) {
+    renderNotFound("Template not found.");
+    return;
+  }
+  setTitle("Edit Template");
+  const sections = templateSectionsForTemplate(id);
+  app.innerHTML = `
+    <div class="stack">
+      <section class="panel">
+        <form class="form-grid" id="templateEditForm">
+          ${field("Template name", "name", "text", template.name, "full", true)}
+          ${selectField("Type", "type", template.type, CHECKLIST_TYPE_OPTIONS)}
+          ${textareaField("Description", "description", template.description, "full")}
+          <label class="field">Status
+            <select name="active">
+              <option value="true" ${template.active ? "selected" : ""}>Active</option>
+              <option value="false" ${!template.active ? "selected" : ""}>Hidden</option>
+            </select>
+          </label>
+          <div class="form-actions">
+            <button class="primary-action" type="submit">Save</button>
+            <a class="ghost-button" href="#/templates">Back</a>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Add Section</h2>
+        <form class="inline-form" id="sectionCreateForm">
+          <label class="field full">Section name
+            <input name="section_name" required />
+          </label>
+          <button class="primary-action" type="submit">Add</button>
+        </form>
+      </section>
+
+      ${sections.map((section) => renderTemplateSectionEditor(section)).join("") || empty("Add a section to start building this template.")}
+    </div>
+  `;
+
+  bindTemplateEditor(id);
+}
+
+function renderTemplateSectionEditor(section) {
+  const items = templateItemsForSection(section.id);
+  return `
+    <section class="panel template-section" data-template-section-id="${escapeAttr(section.id)}">
+      <div class="section-heading">
+        <h2>${escapeHtml(section.section_name)}</h2>
+        <span class="count-pill">${items.length}</span>
+      </div>
+      <div class="compact-list">
+        ${items.map((item) => `
+          <div class="template-item-line" data-template-item-id="${escapeAttr(item.id)}">
+            <span>${escapeHtml(item.item_text)}${item.required ? "" : " (optional)"}</span>
+            <button class="plain-button remove-template-item" type="button">Remove</button>
+          </div>
+        `).join("") || '<p class="muted">No items in this section yet.</p>'}
+      </div>
+      <form class="inline-form add-template-item-form">
+        <label class="field full">Item
+          <input name="item_text" required />
+        </label>
+        <label class="field checkbox-field">
+          <input name="required" type="checkbox" checked />
+          Required
+        </label>
+        <label class="field checkbox-field">
+          <input name="allow_photo" type="checkbox" />
+          Photo useful
+        </label>
+        <button class="primary-action" type="submit">Add item</button>
+      </form>
+    </section>
+  `;
+}
+
+function bindTemplateEditor(templateId) {
+  document.getElementById("templateEditForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const template = checklistTemplateById(templateId);
+    const form = new FormData(event.currentTarget);
+    Object.assign(template, {
+      name: form.get("name").trim(),
+      type: form.get("type"),
+      description: form.get("description"),
+      active: form.get("active") === "true",
+      updated_at: nowIso(),
+    });
+    saveState();
+    renderTemplateEditor(templateId);
+  });
+
+  document.getElementById("sectionCreateForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const sortOrder = templateSectionsForTemplate(templateId).length + 1;
+    state.checklist_template_sections.push(checklistTemplateSection(uid("tsec"), templateId, form.get("section_name").trim(), sortOrder));
+    saveState();
+    renderTemplateEditor(templateId);
+  });
+
+  document.querySelectorAll(".add-template-item-form").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const section = form.closest("[data-template-section-id]");
+      const sectionId = section.dataset.templateSectionId;
+      const formData = new FormData(form);
+      const sortOrder = templateItemsForSection(sectionId).length + 1;
+      state.checklist_template_items.push(checklistTemplateItem(uid("titem"), sectionId, formData.get("item_text").trim(), sortOrder, {
+        required: formData.has("required"),
+        allow_photo: formData.has("allow_photo"),
+      }));
+      saveState();
+      renderTemplateEditor(templateId);
+    });
+  });
+
+  document.querySelectorAll(".remove-template-item").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const row = button.closest("[data-template-item-id]");
+      const id = row.dataset.templateItemId;
+      state.checklist_template_items = state.checklist_template_items.filter((item) => item.id !== id);
+      if (dataStore?.deleteChecklistTemplateItem) {
+        try {
+          await dataStore.deleteChecklistTemplateItem(id);
+        } catch (error) {
+          backendStatus.message = `Delete sync error: ${error.message}`;
+          toast(backendStatus.message);
+        }
+      }
+      saveState();
+      renderTemplateEditor(templateId);
+    });
+  });
 }
 
 function renderOrders() {
@@ -872,11 +1914,37 @@ function renderHistory() {
   if (params.supplier_id) items = items.filter((item) => item.supplier_id === params.supplier_id);
   if (params.job_id) items = items.filter((item) => item.job_id === params.job_id);
   items = items.sort((a, b) => (b.completed_at || "").localeCompare(a.completed_at || ""));
+  let checklists = state.job_checklists.filter((item) => item.status === "complete");
+  if (params.job_id) checklists = checklists.filter((item) => item.job_id === params.job_id);
+  checklists = checklists.sort((a, b) => (b.completed_at || "").localeCompare(a.completed_at || ""));
 
   app.innerHTML = `
     <div class="stack">
+      <section>
+        <div class="section-heading">
+          <h2>Completed Checklists</h2>
+          <span class="count-pill">${checklists.length}</span>
+        </div>
+        <div class="list">
+          ${checklists.length ? checklists.map((checklist) => `
+            <a class="list-link" href="#/checklists/${checklist.id}">
+              <span>
+                <strong>${escapeHtml(checklist.title)}</strong><br>
+                <span class="muted">${escapeHtml(jobById(checklist.job_id) ? labelForJob(jobById(checklist.job_id)) : "No job")} - ${escapeHtml(formatDateTime(checklist.completed_at))}</span>
+              </span>
+              <span class="status-pill">${escapeHtml(readable(checklist.checklist_type))}</span>
+            </a>
+          `).join("") : empty("No completed checklists yet.")}
+        </div>
+      </section>
+      <section>
+        <div class="section-heading">
+          <h2>Completed Run List Items</h2>
+          <span class="count-pill">${items.length}</span>
+        </div>
       <section class="list">
         ${items.length ? renderItemList(items, { includeCompleted: true }) : empty("No completed items yet.")}
+      </section>
       </section>
     </div>
   `;
@@ -1193,6 +2261,12 @@ function formatDate(value) {
   if (!value) return "";
   const date = new Date(`${value}T00:00:00`);
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
 function sortByPriorityThenName(a, b) {

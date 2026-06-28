@@ -8,8 +8,10 @@ Cabinet Ninja pickup/order list MVP.
 - Quick add form with supplier, job, category, type, status, needed-by, priority, notes, and product link.
 - Supplier view with active item counts and supplier-only detail.
 - Job view with outstanding item counts and job detail grouped by supplier.
+- Job-based packing and QC completion checklists generated from editable templates.
+- Checklist progress, required item completion rules, notes, photo-link fields, and override completion notes.
 - Status/orders view.
-- Completed history with reopen support.
+- Completed history with reopen support for run-list items and retained completed checklists.
 - Search across item, supplier, job, category, status, type, and notes.
 - Editable supplier list for adding and hiding suppliers.
 - PWA files: `manifest.webmanifest`, `service-worker.js`, and `icon.svg`.
@@ -48,6 +50,8 @@ window.RUN_LIST_CONFIG = {
 
 The schema enables row level security and lets authenticated Supabase users read/write the shared Run List tables. This is intentionally simple for the MVP: everyone who can sign in can work from the same workshop list.
 
+For an existing Supabase project that already has the original Run List tables, run `supabase-checklists-migration.sql` once to add the checklist tables.
+
 ## Running locally
 
 Open `index.html` directly for a quick check, or serve the folder over HTTP for full PWA behavior.
@@ -66,7 +70,13 @@ Use `supabase-schema.sql` as the first backend shape. The existing app data name
 - `jobs`
 - `categories`
 - `items`
+- `checklist_templates`
+- `checklist_template_sections`
+- `checklist_template_items`
+- `job_checklists`
+- `job_checklist_sections`
+- `job_checklist_items`
 - `material_templates`
 - `material_template_items`
 
-The template tables are included only so the database will not fight later template work. The MVP UI does not use them yet.
+The material template tables are included only so the database will not fight later material-template work. The checklist template tables are used by the MVP.
