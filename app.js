@@ -37,17 +37,65 @@ const PRIORITY_OPTIONS = [
 
 const COMPLETED_STATUSES = new Set(["picked_up", "done", "cancelled"]);
 const CLOSED_JOB_STATUSES = new Set(["complete", "completed", "done", "cancelled", "archived"]);
-const CLOSED_LEAD_STATUSES = new Set(["accepted", "won", "lost", "cancelled"]);
+const CLOSED_LEAD_STATUSES = new Set(["job_accepted", "job_declined", "accepted", "won", "lost", "cancelled"]);
+const JOB_NUMBER_PREFIX = "CN";
+const JOB_NUMBER_PAD = 4;
 
 const LEAD_STATUS_OPTIONS = [
   ["new_lead", "New lead"],
   ["contacted", "Contacted"],
+  ["to_measure_up", "To measure up"],
   ["measure_booked", "Measure booked"],
-  ["quote_sent", "Quote sent"],
-  ["accepted", "Accepted"],
-  ["won", "Won"],
+  ["measured", "Measured"],
+  ["to_quote", "To quote"],
+  ["quoted", "Quoted"],
+  ["follow_up", "Follow up"],
+  ["job_accepted", "Job accepted"],
+  ["job_declined", "Job declined"],
   ["lost", "Lost"],
   ["cancelled", "Cancelled"],
+];
+
+const JOB_STAGE_OPTIONS = [
+  ["active", "Active"],
+  ["job_accepted", "Job accepted"],
+  ["materials_to_order", "Materials to order"],
+  ["materials_ordered", "Materials ordered"],
+  ["materials_all_arrived", "Materials all arrived"],
+  ["cut_and_build", "Cut and build"],
+  ["load_into_install_trailer", "Load into install trailer"],
+  ["install", "Install"],
+  ["installed", "Installed"],
+  ["complete", "Complete"],
+  ["cancelled", "Cancelled"],
+  ["archived", "Archived"],
+];
+
+const LEAD_PIPELINE_STAGES = [
+  "new_lead",
+  "contacted",
+  "to_measure_up",
+  "measure_booked",
+  "measured",
+  "to_quote",
+  "quoted",
+  "follow_up",
+  "job_accepted",
+  "job_declined",
+];
+
+const JOB_PIPELINE_STAGES = [
+  "active",
+  "job_accepted",
+  "materials_to_order",
+  "materials_ordered",
+  "materials_all_arrived",
+  "cut_and_build",
+  "load_into_install_trailer",
+  "install",
+  "installed",
+  "complete",
+  "cancelled",
 ];
 
 const CHECKLIST_TYPE_OPTIONS = [
@@ -247,6 +295,7 @@ function job(job_number, client_name, job_name, location, status) {
     location,
     status,
     created_at: now,
+    updated_at: now,
     active: true,
   };
 }
@@ -902,6 +951,7 @@ function cleanJob(item) {
     status: item.status || "active",
     active: item.active !== false,
     created_at: item.created_at,
+    updated_at: item.updated_at,
   });
 }
 
@@ -1078,7 +1128,9 @@ function render() {
     lead: () => renderLeadDetail(route.id),
     leadform: () => renderLeadForm(route.params, route.id),
     jobs: renderJobs,
+    jobform: () => renderJobForm(route.params),
     job: () => renderJobDetail(route.id),
+    stages: renderStages,
     checklist: () => renderChecklistDetail(route.id),
     templates: renderChecklistTemplates,
     template: () => renderTemplateEditor(route.id),
@@ -1245,6 +1297,7 @@ function renderHome() {
         ${homeTile("Orders", `${orderedCount} waiting`, "#/orders")}
         ${homeTile("Leads", `${activeLeadCount} active`, "#/leads")}
         ${homeTile("Jobs", `${openJobCount} open`, "#/jobs")}
+        ${homeTile("Stages", "Lead and job flow", "#/stages")}
         ${homeTile("Add Item", "Quick entry", "#/add")}
         ${homeTile("Search", "Find anything", "#/search")}
         ${homeTile("Checklist Templates", "Packing and QC", "#/templates")}
@@ -1453,6 +1506,74 @@ function renderLeadForm(params = {}, id = null) {
   });
 }
 
+function renderStages() {
+  setTitle("Stages");
+  app.innerHTML = `
+    <div class="stack">
+      <section>
+        <div class="section-heading">
+          <h2>Lead Pipeline</h2>
+          <a class="ghost-button" href="#/leadform">Add lead</a>
+        </div>
+        ${LEAD_PIPELINE_STAGES.map((stage) => renderStageGroup(stage, state.leads.filter((leadItem) => leadItem.status === stage), "lead")).join("")}
+      </section>
+      <section>
+        <div class="section-heading">
+          <h2>Job Pipeline</h2>
+          <span class="button-row">
+            <a class="ghost-button" href="#/jobform">New job</a>
+            <a class="ghost-button" href="#/jobs">Open jobs</a>
+          </span>
+        </div>
+        ${JOB_PIPELINE_STAGES.map((stage) => renderStageGroup(stage, state.jobs.filter((jobItem) => jobItem.status === stage), "job")).join("")}
+      </section>
+    </div>
+  `;
+}
+
+function renderStageGroup(stage, rows, kind) {
+  const sorted = [...rows].sort((a, b) => stageRowLabel(a, kind).localeCompare(stageRowLabel(b, kind)));
+  return `
+    <details class="checklist-section stage-section" ${sorted.length ? "open" : ""}>
+      <summary>
+        <span>${escapeHtml(readable(stage))}</span>
+        <span class="count-pill">${sorted.length}</span>
+      </summary>
+      <div class="list stage-list">
+        ${sorted.map((item) => renderStageRow(item, kind)).join("") || empty("Nothing in this stage.")}
+      </div>
+    </details>
+  `;
+}
+
+function renderStageRow(item, kind) {
+  if (kind === "lead") {
+    return `
+      <a class="list-link" href="#/leads/${item.id}">
+        <span>
+          <strong>${escapeHtml(labelForLead(item))}</strong><br>
+          <span class="muted">${escapeHtml([item.location, item.next_follow_up ? `Follow up ${formatDate(item.next_follow_up)}` : ""].filter(Boolean).join(" - ") || "Lead")}</span>
+        </span>
+        <span class="priority-pill ${escapeAttr(item.priority)}">${escapeHtml(readable(item.priority))}</span>
+      </a>
+    `;
+  }
+  const outstanding = activeItems().filter((runItem) => runItem.job_id === item.id).length;
+  return `
+    <a class="list-link" href="#/jobs/${item.id}">
+      <span>
+        <strong>${escapeHtml(labelForJob(item))}</strong><br>
+        <span class="muted">${escapeHtml([item.location, outstanding ? `${outstanding} run-list items` : ""].filter(Boolean).join(" - ") || "Job")}</span>
+      </span>
+      <span class="count-pill">${outstanding}</span>
+    </a>
+  `;
+}
+
+function stageRowLabel(item, kind) {
+  return kind === "lead" ? labelForLead(item) : labelForJob(item);
+}
+
 function convertLeadToJob(id) {
   const leadItem = leadById(id);
   if (!leadItem) return;
@@ -1461,10 +1582,10 @@ function convertLeadToJob(id) {
     navigate(`/jobs/${existingJob.id}`);
     return;
   }
-  const nextJob = job("", leadItem.client_name || leadItem.lead_name, leadItem.lead_name, leadItem.location, "active");
+  const nextJob = job(nextJobNumber(), leadItem.client_name || leadItem.lead_name, leadItem.lead_name, leadItem.location, "job_accepted");
   state.jobs.unshift(nextJob);
   Object.assign(leadItem, {
-    status: "accepted",
+    status: "job_accepted",
     active: false,
     converted_job_id: nextJob.id,
     updated_at: nowIso(),
@@ -1480,7 +1601,7 @@ function toggleLeadClosed(id) {
     leadItem.status = "contacted";
     leadItem.active = true;
   } else {
-    leadItem.status = "lost";
+    leadItem.status = "job_declined";
     leadItem.active = false;
   }
   leadItem.updated_at = nowIso();
@@ -1494,7 +1615,7 @@ function renderJobs() {
   const showClosed = params.show === "closed";
   const jobs = showClosed ? closedJobs() : openJobs();
   const rows = jobs
-    .sort((a, b) => labelForJob(a).localeCompare(labelForJob(b)))
+    .sort((a, b) => jobStageSort(a.status) - jobStageSort(b.status) || labelForJob(a).localeCompare(labelForJob(b)))
     .map((jobItem) => {
       const count = activeItems().filter((item) => item.job_id === jobItem.id).length;
       const packing = latestChecklistForType(jobItem.id, "packing");
@@ -1518,12 +1639,51 @@ function renderJobs() {
   app.innerHTML = `
     <div class="stack">
       <div class="toolbar">
+        <a class="primary-action" href="#/jobform">New job</a>
         <a class="primary-action" href="#/add">Add item</a>
+        <a class="ghost-button" href="#/stages">Stages</a>
         <a class="ghost-button" href="${showClosed ? "#/jobs" : "#/jobs?show=closed"}">${showClosed ? "Show open" : "Show complete/cancelled"}</a>
       </div>
       <section class="list">${rows || empty(showClosed ? "No completed or cancelled jobs yet." : "No open jobs yet.")}</section>
     </div>
   `;
+}
+
+function renderJobForm(params = {}) {
+  const suggestedNumber = nextJobNumber();
+  setTitle("New Job");
+  app.innerHTML = `
+    <form class="form-grid" id="jobCreateForm">
+      <section class="panel full">
+        <h2>Job Number</h2>
+        <p class="muted">This job will be created as <strong>${escapeHtml(suggestedNumber)}</strong>.</p>
+      </section>
+      ${field("Client name", "client_name", "text", params.client || "", "full", true)}
+      ${field("Job name", "job_name", "text", params.name || "", "full", true)}
+      ${field("Location", "location", "text", params.location || "", "full")}
+      ${selectField("Starting stage", "status", params.status || "job_accepted", JOB_STAGE_OPTIONS)}
+      <div class="form-actions full">
+        <button class="primary-action" type="submit">Create job</button>
+        <a class="ghost-button" href="#/jobs">Cancel</a>
+      </div>
+    </form>
+  `;
+
+  document.getElementById("jobCreateForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const newJob = job(
+      nextJobNumber(),
+      form.get("client_name"),
+      form.get("job_name"),
+      form.get("location"),
+      form.get("status") || "job_accepted",
+    );
+    newJob.active = newJob.status !== "archived";
+    state.jobs.unshift(newJob);
+    saveState();
+    navigate(`/jobs/${newJob.id}`);
+  });
 }
 
 function renderJobDetail(id) {
@@ -1546,6 +1706,13 @@ function renderJobDetail(id) {
         <button class="ghost-button" id="cancelJobButton" type="button">${jobItem.status === "cancelled" ? "Reopen cancelled" : "Cancel job"}</button>
         <button class="ghost-button" id="archiveJobButton" type="button">${jobItem.active === false ? "Unarchive" : "Archive"}</button>
       </div>
+      <section class="panel">
+        <h2>Job Stage</h2>
+        <form class="inline-form" id="jobStageForm">
+          ${selectField("Current stage", "status", jobItem.status || "active", JOB_STAGE_OPTIONS)}
+          <button class="primary-action" type="submit">Update</button>
+        </form>
+      </section>
       ${qcWarning ? `<section class="warning-panel"><strong>QC checklist incomplete.</strong><br><span>Complete QC or use a checklist override before marking this job complete.</span></section>` : ""}
       ${renderJobChecklistArea(id)}
       <section>
@@ -1567,6 +1734,10 @@ function renderJobDetail(id) {
   `;
 
   bindJobChecklistArea(id);
+  document.getElementById("jobStageForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    setJobStage(id, new FormData(event.currentTarget).get("status"));
+  });
   document.getElementById("completeJobButton").addEventListener("click", () => toggleJobComplete(id));
   document.getElementById("cancelJobButton").addEventListener("click", () => toggleJobCancelled(id));
   document.getElementById("archiveJobButton").addEventListener("click", () => toggleJobArchived(id));
@@ -1649,6 +1820,16 @@ function toggleJobComplete(jobId) {
   jobItem.updated_at = nowIso();
   saveState();
   navigate("/jobs");
+}
+
+function setJobStage(jobId, status) {
+  const jobItem = jobById(jobId);
+  if (!jobItem) return;
+  jobItem.status = status || "active";
+  jobItem.active = jobItem.status !== "archived";
+  jobItem.updated_at = nowIso();
+  saveState();
+  navigate(CLOSED_JOB_STATUSES.has(jobItem.status) ? "/jobs" : `/jobs/${jobId}`);
 }
 
 function toggleJobCancelled(jobId) {
@@ -2586,6 +2767,16 @@ function labelForJob(jobItem) {
   return [jobItem.job_number, jobItem.job_name || jobItem.client_name].filter(Boolean).join(" ");
 }
 
+function nextJobNumber() {
+  const pattern = new RegExp(`^${JOB_NUMBER_PREFIX}-(\\d+)$`, "i");
+  const highest = state.jobs.reduce((max, jobItem) => {
+    const match = String(jobItem.job_number || "").match(pattern);
+    if (!match) return max;
+    return Math.max(max, Number(match[1]) || 0);
+  }, 0);
+  return `${JOB_NUMBER_PREFIX}-${String(highest + 1).padStart(JOB_NUMBER_PAD, "0")}`;
+}
+
 function labelForLead(leadItem) {
   return [leadItem.lead_name, leadItem.client_name && leadItem.client_name !== leadItem.lead_name ? leadItem.client_name : ""].filter(Boolean).join(" - ");
 }
@@ -2593,7 +2784,17 @@ function labelForLead(leadItem) {
 function leadSortValue(leadItem) {
   const date = leadItem.next_follow_up || "9999-12-31";
   const priority = { urgent: "0", normal: "1", low: "2" }[leadItem.priority] || "1";
-  return `${date}-${priority}-${labelForLead(leadItem).toLowerCase()}`;
+  return `${leadStageSort(leadItem.status)}-${date}-${priority}-${labelForLead(leadItem).toLowerCase()}`;
+}
+
+function leadStageSort(status) {
+  const index = LEAD_PIPELINE_STAGES.indexOf(status || "");
+  return index === -1 ? 99 : index;
+}
+
+function jobStageSort(status) {
+  const index = JOB_PIPELINE_STAGES.indexOf(status || "");
+  return index === -1 ? 99 : index;
 }
 
 function readable(value) {

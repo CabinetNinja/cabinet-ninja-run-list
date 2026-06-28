@@ -1,4 +1,4 @@
-const CACHE_NAME = "cabinet-ninja-run-list-v5";
+const CACHE_NAME = "cabinet-ninja-run-list-v6";
 const ASSETS = [
   "./",
   "./index.html",

@@ -10,6 +10,8 @@ Cabinet Ninja pickup/order list MVP.
 - Job view with outstanding item counts and job detail grouped by supplier.
 - Job-based packing and QC completion checklists generated from editable templates.
 - Lightweight lead tracking with follow-up dates, lead statuses, and conversion into jobs.
+- Auto-numbered jobs using the Cabinet Ninja `CN-####` format.
+- Lead/job stage pipeline: To measure up, To quote, Quoted, Job accepted/declined, Materials, Cut/build, Load, Install, and completion stages.
 - Open Jobs hides complete/cancelled/archived jobs by default, with a separate completed/cancelled view.
 - Checklist progress, required item completion rules, notes, photo-link fields, and override completion notes.
 - Status/orders view.
