@@ -44,11 +44,16 @@ const JOB_NUMBER_PAD = 4;
 const LEAD_STATUS_OPTIONS = [
   ["new_lead", "New lead"],
   ["contacted", "Contacted"],
+  ["needs_photos_measurements", "Needs photos/measurements"],
+  ["ballpark_sent", "Ballpark sent"],
   ["to_measure_up", "To measure up"],
   ["measure_booked", "Measure booked"],
   ["measured", "Measured"],
   ["to_quote", "To quote"],
+  ["design_quote_in_progress", "Design/quote in progress"],
   ["quoted", "Quoted"],
+  ["quote_sent", "Quote sent"],
+  ["waiting_on_client", "Waiting on client"],
   ["follow_up", "Follow up"],
   ["job_accepted", "Job accepted"],
   ["job_declined", "Job declined"],
@@ -59,13 +64,23 @@ const LEAD_STATUS_OPTIONS = [
 const JOB_STAGE_OPTIONS = [
   ["active", "Active"],
   ["job_accepted", "Job accepted"],
+  ["accepted_deposit_needed", "Accepted / deposit needed"],
+  ["deposit_paid", "Deposit paid"],
   ["materials_to_order", "Materials to order"],
   ["materials_ordered", "Materials ordered"],
   ["materials_all_arrived", "Materials all arrived"],
+  ["ready_to_machine", "Ready to machine"],
+  ["machining", "Machining"],
+  ["assembly", "Assembly"],
   ["cut_and_build", "Cut and build"],
+  ["ready_to_install", "Ready to install"],
   ["load_into_install_trailer", "Load into install trailer"],
+  ["packed", "Packed"],
   ["install", "Install"],
+  ["installing", "Installing"],
   ["installed", "Installed"],
+  ["qc_defects", "QC / defects"],
+  ["final_invoice_due", "Final invoice due"],
   ["complete", "Complete"],
   ["cancelled", "Cancelled"],
   ["archived", "Archived"],
@@ -74,11 +89,16 @@ const JOB_STAGE_OPTIONS = [
 const LEAD_PIPELINE_STAGES = [
   "new_lead",
   "contacted",
+  "needs_photos_measurements",
+  "ballpark_sent",
   "to_measure_up",
   "measure_booked",
   "measured",
   "to_quote",
+  "design_quote_in_progress",
   "quoted",
+  "quote_sent",
+  "waiting_on_client",
   "follow_up",
   "job_accepted",
   "job_declined",
@@ -87,13 +107,23 @@ const LEAD_PIPELINE_STAGES = [
 const JOB_PIPELINE_STAGES = [
   "active",
   "job_accepted",
+  "accepted_deposit_needed",
+  "deposit_paid",
   "materials_to_order",
   "materials_ordered",
   "materials_all_arrived",
+  "ready_to_machine",
+  "machining",
+  "assembly",
   "cut_and_build",
+  "ready_to_install",
   "load_into_install_trailer",
+  "packed",
   "install",
+  "installing",
   "installed",
+  "qc_defects",
+  "final_invoice_due",
   "complete",
   "cancelled",
 ];
@@ -231,6 +261,7 @@ let backendStatus = {
   userEmail: "",
 };
 let remoteSaveQueue = Promise.resolve();
+let dashboardColumnsAvailable = true;
 
 const app = document.getElementById("app");
 const title = document.getElementById("screenTitle");
@@ -294,6 +325,10 @@ function job(job_number, client_name, job_name, location, status) {
     job_name,
     location,
     status,
+    priority: "normal",
+    next_action: "",
+    next_action_due_date: "",
+    target_install_date: "",
     created_at: now,
     updated_at: now,
     active: true,
@@ -592,6 +627,9 @@ function normalizeState(data) {
       status: "new_lead",
       priority: "normal",
       next_follow_up: "",
+      next_action: "",
+      next_action_due_date: "",
+      last_contacted_at: "",
       notes: "",
       converted_job_id: "",
       active: true,
@@ -605,6 +643,9 @@ function normalizeState(data) {
       status: item.status || "new_lead",
       priority: item.priority || "normal",
       next_follow_up: item.next_follow_up || "",
+      next_action: item.next_action || "",
+      next_action_due_date: item.next_action_due_date || "",
+      last_contacted_at: item.last_contacted_at || "",
       notes: item.notes || "",
       converted_job_id: item.converted_job_id || "",
       active: item.active !== false,
@@ -615,12 +656,21 @@ function normalizeState(data) {
       job_name: "",
       location: "",
       status: "active",
+      priority: "normal",
+      next_action: "",
+      next_action_due_date: "",
+      target_install_date: "",
       active: true,
       ...item,
       job_number: item.job_number || "",
       client_name: item.client_name || "",
       job_name: item.job_name || "",
       location: item.location || "",
+      status: item.status || "active",
+      priority: item.priority || "normal",
+      next_action: item.next_action || "",
+      next_action_due_date: item.next_action_due_date || "",
+      target_install_date: item.target_install_date || "",
     })),
     categories: (data.categories || []).map((item) => ({
       notes: "",
@@ -843,8 +893,8 @@ function createSupabaseStore(config) {
   async function saveFullState(nextState) {
     const normalized = normalizeState(nextState);
     await upsertRows("suppliers", normalized.suppliers.map(cleanSupplier));
-    await upsertRows("leads", normalized.leads.map(cleanLead));
-    await upsertRows("jobs", normalized.jobs.map(cleanJob));
+    await upsertDashboardAwareRows("leads", normalized.leads.map(cleanLead));
+    await upsertDashboardAwareRows("jobs", normalized.jobs.map(cleanJob));
     await upsertRows("categories", normalized.categories.map(cleanCategory));
     await upsertRows("items", normalized.items.map(cleanItem));
     await upsertRows("checklist_templates", normalized.checklist_templates.map(cleanChecklistTemplate));
@@ -859,6 +909,21 @@ function createSupabaseStore(config) {
     if (!rows.length) return;
     const { error } = await client.from(table).upsert(rows, { onConflict: "id" });
     if (error) throw error;
+  }
+
+  async function upsertDashboardAwareRows(table, rows) {
+    if (!dashboardColumnsAvailable) {
+      await upsertRows(table, rows.map(stripDashboardColumns));
+      return;
+    }
+    try {
+      await upsertRows(table, rows);
+    } catch (error) {
+      if (!isMissingDashboardColumnError(error)) throw error;
+      dashboardColumnsAvailable = false;
+      backendStatus.message = "Synced without dashboard planning fields; run supabase-dashboard-migration.sql";
+      await upsertRows(table, rows.map(stripDashboardColumns));
+    }
   }
 
   return {
@@ -933,6 +998,9 @@ function cleanLead(item) {
     status: item.status || "new_lead",
     priority: item.priority || "normal",
     next_follow_up: item.next_follow_up || null,
+    next_action: item.next_action || null,
+    next_action_due_date: item.next_action_due_date || null,
+    last_contacted_at: item.last_contacted_at || null,
     notes: item.notes || null,
     converted_job_id: item.converted_job_id || null,
     active: item.active !== false,
@@ -949,10 +1017,34 @@ function cleanJob(item) {
     job_name: item.job_name || "",
     location: item.location || "",
     status: item.status || "active",
+    priority: item.priority || "normal",
+    next_action: item.next_action || null,
+    next_action_due_date: item.next_action_due_date || null,
+    target_install_date: item.target_install_date || null,
     active: item.active !== false,
     created_at: item.created_at,
     updated_at: item.updated_at,
   });
+}
+
+function stripDashboardColumns(row) {
+  const {
+    next_action,
+    next_action_due_date,
+    last_contacted_at,
+    target_install_date,
+    priority,
+    ...rest
+  } = row;
+  if (row.priority && !("job_number" in row)) {
+    rest.priority = row.priority;
+  }
+  return rest;
+}
+
+function isMissingDashboardColumnError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return ["next_action", "next_action_due_date", "last_contacted_at", "target_install_date", "priority"].some((column) => message.includes(column));
 }
 
 function cleanCategory(item) {
@@ -1105,6 +1197,9 @@ function createLead(input) {
     status: input.status || "new_lead",
     priority: input.priority || "normal",
     next_follow_up: input.next_follow_up || "",
+    next_action: input.next_action || "",
+    next_action_due_date: input.next_action_due_date || "",
+    last_contacted_at: input.last_contacted_at || "",
     notes: input.notes || "",
     converted_job_id: input.converted_job_id || "",
     active: input.active !== false,
@@ -1281,49 +1376,287 @@ function closedJobs() {
 }
 
 function renderHome() {
-  setTitle("Run List");
-  const neededCount = activeItems().length;
-  const activeLeadCount = activeLeads().length;
-  const openJobCount = openJobs().length;
-  const supplierCount = state.suppliers.filter((supplierItem) => supplierItem.active).length;
-  const orderedCount = activeItems().filter((item) => item.status === "ordered").length;
-  const readyCount = activeItems().filter((item) => item.status === "ready_to_collect").length;
+  setTitle("Cabinet Ninja Dashboard");
+  const attentionItems = dashboardAttentionItems().slice(0, 14);
+  const urgentRunItems = dashboardUrgentRunItems().slice(0, 6);
+  const checklistWarnings = dashboardChecklistWarnings().slice(0, 8);
+  const upcomingItems = dashboardUpcomingItems().slice(0, 8);
+  const activeRunItems = activeItems();
 
   app.innerHTML = `
-    <div class="stack">
+    <div class="dashboard stack">
       ${renderBackendPanel()}
-      <section class="grid-actions" aria-label="Main sections">
-        ${homeTile("Run List by Supplier", `${neededCount} active`, "#/suppliers")}
-        ${homeTile("Orders", `${orderedCount} waiting`, "#/orders")}
-        ${homeTile("Leads", `${activeLeadCount} active`, "#/leads")}
-        ${homeTile("Jobs", `${openJobCount} open`, "#/jobs")}
-        ${homeTile("Stages", "Lead and job flow", "#/stages")}
-        ${homeTile("Add Item", "Quick entry", "#/add")}
-        ${homeTile("Search", "Find anything", "#/search")}
-        ${homeTile("Checklist Templates", "Packing and QC", "#/templates")}
-      </section>
-
-      <section class="panel">
-        <h2>Today</h2>
-        <div class="list">
-          ${metricRow("Active items", neededCount)}
-          ${metricRow("Active leads", activeLeadCount)}
-          ${metricRow("Open jobs", openJobCount)}
-          ${metricRow("Ready to collect", readyCount)}
-          ${metricRow("Active suppliers", supplierCount)}
+      <section class="dashboard-hero">
+        <div>
+          <p class="dashboard-date">${escapeHtml(fullDateLabel())}</p>
+          <h2>What needs attention today?</h2>
+        </div>
+        <div class="quick-actions" aria-label="Quick actions">
+          <a class="primary-action" href="#/leadform">Add Lead</a>
+          <a class="ghost-button" href="#/leadform">Add Customer</a>
+          <a class="ghost-button" href="#/jobform">Add Job</a>
+          <a class="ghost-button" href="#/add">Add Run List Item</a>
+          <a class="ghost-button" href="#/jobs">Add Checklist</a>
+          <a class="ghost-button" href="#/settings">Add Supplier</a>
         </div>
       </section>
 
-      <section>
+      <section class="panel attention-card">
         <div class="section-heading">
-          <h2>Pickup Needed</h2>
-          <a class="ghost-button" href="#/suppliers">Suppliers</a>
+          <h2>Today / Needs Attention</h2>
+          <span class="count-pill">${attentionItems.length}</span>
         </div>
-        <div class="list">${renderItemList(activeItems().filter((item) => item.type === "pickup").slice(0, 6))}</div>
+        <div class="list">${renderDashboardActionList(attentionItems, "Nothing urgent right now.")}</div>
       </section>
+
+      <div class="dashboard-grid">
+        ${renderDashboardCard("Run List / Orders", "#/suppliers", `
+          <div class="list">${renderSupplierOrderSummary(activeRunItems)}</div>
+          <h3>Urgent pickups/orders</h3>
+          <div class="list compact-dashboard-list">${renderDashboardActionList(urgentRunItems, "No urgent pickup/order items.")}</div>
+        `)}
+        ${renderDashboardCard("Upcoming", "#/stages", `
+          <div class="list">${renderDashboardActionList(upcomingItems, "No upcoming measure-ups or installs booked.")}</div>
+        `)}
+        ${renderDashboardCard("Lead Pipeline", "#/leads", `
+          <div class="list">${renderStatusSummary(activeLeads(), LEAD_PIPELINE_STAGES, "lead")}</div>
+          <h3>Lead actions</h3>
+          <div class="list compact-dashboard-list">${renderDashboardActionList(dashboardLeadActions().slice(0, 5), "No lead actions waiting.")}</div>
+        `)}
+        ${renderDashboardCard("Active Jobs", "#/jobs", `
+          <div class="list">${renderStatusSummary(openJobs(), JOB_PIPELINE_STAGES, "job")}</div>
+          <h3>Job warnings</h3>
+          <div class="list compact-dashboard-list">${renderDashboardActionList(dashboardJobWarnings().slice(0, 5), "No active job warnings.")}</div>
+        `)}
+        ${renderDashboardCard("Checklists", "#/templates", `
+          <div class="list">${renderDashboardActionList(checklistWarnings, "No checklist warnings.")}</div>
+        `)}
+        ${renderDashboardCard("Payment / Invoice Prompts", "#/jobs", `
+          <div class="list">${renderPaymentPromptSummary()}</div>
+        `)}
+      </div>
     </div>
   `;
   bindBackendPanel();
+}
+
+function renderDashboardCard(titleText, href, bodyHtml) {
+  return `
+    <section class="panel dashboard-card">
+      <div class="section-heading">
+        <h2>${escapeHtml(titleText)}</h2>
+        <a class="ghost-button" href="${href}">Open</a>
+      </div>
+      ${bodyHtml}
+    </section>
+  `;
+}
+
+function renderDashboardActionList(items, emptyMessage) {
+  if (!items.length) return empty(emptyMessage);
+  return items.map((item) => `
+    <a class="list-link dashboard-alert ${escapeAttr(item.severity || "")}" href="${escapeAttr(item.href)}">
+      <span>
+        <span class="status-pill ${escapeAttr(item.severity || "")}">${escapeHtml(item.type)}</span>
+        <strong>${escapeHtml(item.title)}</strong><br>
+        <span class="muted">${escapeHtml([item.reason, item.dateLabel].filter(Boolean).join(" - "))}</span>
+      </span>
+      <span class="priority-pill ${escapeAttr(item.severity === "urgent" ? "urgent" : "normal")}">${escapeHtml(item.badge || "Open")}</span>
+    </a>
+  `).join("");
+}
+
+function renderStatusSummary(records, stages, kind) {
+  const counts = stages
+    .map((stage) => [stage, records.filter((item) => item.status === stage).length])
+    .filter(([, count]) => count > 0);
+  if (!counts.length) return empty(kind === "lead" ? "No active leads." : "No active jobs.");
+  return counts.map(([stage, count]) => {
+    const href = kind === "lead" ? `#/leads?status=${encodeURIComponent(stage)}` : `#/jobs?status=${encodeURIComponent(stage)}`;
+    return `
+      <a class="list-link compact-link" href="${href}">
+        <strong>${escapeHtml(readable(stage))}</strong>
+        <span class="count-pill">${count}</span>
+      </a>
+    `;
+  }).join("");
+}
+
+function renderSupplierOrderSummary(items) {
+  const rows = state.suppliers
+    .filter((supplierItem) => supplierItem.active)
+    .map((supplierItem) => ({
+      supplier: supplierItem,
+      count: items.filter((item) => item.supplier_id === supplierItem.id).length,
+    }))
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.count - a.count || a.supplier.supplier_name.localeCompare(b.supplier.supplier_name));
+  if (!rows.length) return empty("No active pickup/order items.");
+  return rows.slice(0, 8).map((row) => `
+    <a class="list-link compact-link" href="#/suppliers/${row.supplier.id}">
+      <strong>${escapeHtml(row.supplier.supplier_name)}</strong>
+      <span class="count-pill">${row.count}</span>
+    </a>
+  `).join("");
+}
+
+function renderPaymentPromptSummary() {
+  const promptStages = ["accepted_deposit_needed", "final_invoice_due"];
+  const rows = openJobs().filter((jobItem) => promptStages.includes(jobItem.status));
+  if (!rows.length) return empty("No payment prompts set up right now.");
+  return rows.map((jobItem) => `
+    <a class="list-link" href="#/jobs/${jobItem.id}">
+      <span>
+        <strong>${escapeHtml(labelForJob(jobItem))}</strong><br>
+        <span class="muted">${escapeHtml(jobItem.status === "accepted_deposit_needed" ? "Deposit invoice/payment needed" : "Final invoice due")}</span>
+      </span>
+      <span class="status-pill">${escapeHtml(readable(jobItem.status))}</span>
+    </a>
+  `).join("");
+}
+
+function dashboardAttentionItems() {
+  return [
+    ...dashboardLeadActions(),
+    ...dashboardJobWarnings(),
+    ...dashboardUrgentRunItems(),
+    ...dashboardChecklistWarnings(),
+  ].sort((a, b) => dashboardSeveritySort(a) - dashboardSeveritySort(b) || (a.sortDate || "9999-12-31").localeCompare(b.sortDate || "9999-12-31") || a.title.localeCompare(b.title));
+}
+
+function dashboardLeadActions() {
+  const items = [];
+  activeLeads().forEach((leadItem) => {
+    const href = `#/leads/${leadItem.id}`;
+    if (isDueOrOverdue(leadItem.next_action_due_date || leadItem.next_follow_up)) {
+      items.push(dashboardItem("Lead", labelForLead(leadItem), dueReason("Lead action", leadItem.next_action_due_date || leadItem.next_follow_up), leadItem.next_action_due_date || leadItem.next_follow_up, href, dueSeverity(leadItem.next_action_due_date || leadItem.next_follow_up), dueBadge(leadItem.next_action_due_date || leadItem.next_follow_up)));
+      return;
+    }
+    if (leadItem.status === "new_lead") {
+      items.push(dashboardItem("Lead", labelForLead(leadItem), "New lead needs reply/action", leadItem.created_at?.slice(0, 10), href, leadItem.priority === "urgent" ? "urgent" : "warning", "New"));
+      return;
+    }
+    if (!leadItem.next_action && !["job_accepted", "job_declined", "lost", "cancelled"].includes(leadItem.status)) {
+      items.push(dashboardItem("Lead", labelForLead(leadItem), "No next action set", "", href, "warning", "Action"));
+      return;
+    }
+    if (leadItem.priority === "urgent") {
+      items.push(dashboardItem("Lead", labelForLead(leadItem), "Urgent lead", leadItem.next_follow_up, href, "urgent", "Urgent"));
+    }
+  });
+  return items;
+}
+
+function dashboardJobWarnings() {
+  const installStages = new Set(["ready_to_install", "load_into_install_trailer", "packed", "install", "installing"]);
+  const qcStages = new Set(["installed", "qc_defects", "final_invoice_due"]);
+  const rows = [];
+  openJobs().forEach((jobItem) => {
+    const href = `#/jobs/${jobItem.id}`;
+    const outstanding = activeItems().filter((item) => item.job_id === jobItem.id).length;
+    const packing = latestChecklistForType(jobItem.id, "packing");
+    const qc = latestChecklistForType(jobItem.id, "qc_completion");
+    if (isDueOrOverdue(jobItem.next_action_due_date)) {
+      rows.push(dashboardItem("Job", labelForJob(jobItem), dueReason(jobItem.next_action || "Job action", jobItem.next_action_due_date), jobItem.next_action_due_date, href, dueSeverity(jobItem.next_action_due_date), dueBadge(jobItem.next_action_due_date)));
+      return;
+    }
+    if (installStages.has(jobItem.status) && outstanding) {
+      rows.push(dashboardItem("Job", labelForJob(jobItem), `${outstanding} outstanding run-list items`, jobItem.target_install_date, href, "urgent", "Blocked"));
+      return;
+    }
+    if (isWithinDays(jobItem.target_install_date, 3) && (!packing || packing.status !== "complete")) {
+      rows.push(dashboardItem("Checklist", labelForJob(jobItem), "Packing checklist incomplete before install", jobItem.target_install_date, packing ? `#/checklists/${packing.id}` : href, "warning", "Packing"));
+      return;
+    }
+    if (qcStages.has(jobItem.status) && (!qc || qc.status !== "complete")) {
+      rows.push(dashboardItem("Checklist", labelForJob(jobItem), "QC checklist incomplete", jobItem.target_install_date, qc ? `#/checklists/${qc.id}` : href, "warning", "QC"));
+      return;
+    }
+    if (!jobItem.next_action) {
+      rows.push(dashboardItem("Job", labelForJob(jobItem), "No next action set", jobItem.target_install_date, href, "warning", "Action"));
+      return;
+    }
+    if (jobItem.priority === "urgent") {
+      rows.push(dashboardItem("Job", labelForJob(jobItem), "Urgent job", jobItem.target_install_date, href, "urgent", "Urgent"));
+    }
+  });
+  return rows;
+}
+
+function dashboardUrgentRunItems() {
+  return activeItems()
+    .filter((item) => item.priority === "urgent" || isDueOrOverdue(item.needed_by) || isWithinDays(item.needed_by, 3))
+    .sort(sortByNeededDate)
+    .map((item) => {
+      const supplierItem = supplierById(item.supplier_id);
+      const jobItem = jobById(item.job_id);
+      const titleText = `${jobItem ? labelForJob(jobItem) : "General"}: ${item.item_name}`;
+      const reason = [supplierItem?.supplier_name, readable(item.type), readable(item.status)].filter(Boolean).join(" - ");
+      return dashboardItem("Order", titleText, reason, item.needed_by, `#/edit/${item.id}`, item.priority === "urgent" || isDueOrOverdue(item.needed_by) ? "urgent" : "warning", item.priority === "urgent" ? "Urgent" : dueBadge(item.needed_by));
+    });
+}
+
+function dashboardChecklistWarnings() {
+  const rows = [];
+  openJobs().forEach((jobItem) => {
+    ["packing", "qc_completion"].forEach((type) => {
+      const checklist = latestChecklistForType(jobItem.id, type);
+      if (!checklist) {
+        if (type === "packing" && isWithinDays(jobItem.target_install_date, 7)) {
+          rows.push(dashboardItem("Checklist", labelForJob(jobItem), "Packing checklist not started", jobItem.target_install_date, `#/jobs/${jobItem.id}`, "warning", "Packing"));
+        }
+        return;
+      }
+      if (checklist.status === "complete") return;
+      const progress = checklistProgress(checklist.id);
+      rows.push(dashboardItem("Checklist", labelForJob(jobItem), `${readable(type)} ${progress.checkedRequired}/${progress.totalRequired}`, jobItem.target_install_date, `#/checklists/${checklist.id}`, "warning", "Incomplete"));
+    });
+  });
+  state.job_checklist_items
+    .filter((item) => ["issue_found", "to_fix"].includes(item.issue_status))
+    .forEach((item) => {
+      const section = state.job_checklist_sections.find((candidate) => candidate.id === item.job_checklist_section_id);
+      const checklist = section ? jobChecklistById(section.job_checklist_id) : null;
+      const jobItem = checklist ? jobById(checklist.job_id) : null;
+      if (!jobItem || CLOSED_JOB_STATUSES.has(jobItem.status)) return;
+      rows.push(dashboardItem("Issue", labelForJob(jobItem), item.item_text, jobItem.target_install_date, `#/checklists/${checklist.id}`, "urgent", "Issue"));
+    });
+  return rows;
+}
+
+function dashboardUpcomingItems() {
+  const rows = [];
+  activeLeads().forEach((leadItem) => {
+    if (["to_measure_up", "measure_booked"].includes(leadItem.status) && leadItem.next_action_due_date) {
+      rows.push(dashboardItem("Measure-up", labelForLead(leadItem), leadItem.next_action || readable(leadItem.status), leadItem.next_action_due_date, `#/leads/${leadItem.id}`, "normal", "Lead"));
+    }
+  });
+  openJobs().forEach((jobItem) => {
+    if (jobItem.target_install_date) {
+      rows.push(dashboardItem("Install", labelForJob(jobItem), readable(jobItem.status), jobItem.target_install_date, `#/jobs/${jobItem.id}`, "normal", "Job"));
+    }
+  });
+  activeItems().filter((item) => item.needed_by && isWithinDays(item.needed_by, 7)).forEach((item) => {
+    rows.push(dashboardItem(readable(item.type), item.item_name, supplierById(item.supplier_id)?.supplier_name || "Supplier", item.needed_by, `#/edit/${item.id}`, item.priority === "urgent" ? "urgent" : "normal", readable(item.type)));
+  });
+  return rows.sort((a, b) => (a.sortDate || "9999-12-31").localeCompare(b.sortDate || "9999-12-31"));
+}
+
+function dashboardItem(type, titleText, reason, dateValue, href, severity = "normal", badge = "Open") {
+  return {
+    type,
+    title: titleText,
+    reason,
+    href,
+    severity,
+    badge,
+    sortDate: dateValue || "9999-12-31",
+    dateLabel: dateValue ? dueLabel(dateValue) : "",
+  };
+}
+
+function dashboardSeveritySort(item) {
+  return { urgent: 0, warning: 1, normal: 2 }[item.severity] ?? 2;
 }
 
 function homeTile(label, count, href) {
@@ -1402,8 +1735,10 @@ function renderSupplierDetail(id) {
 function renderLeads() {
   const params = getRoute().params;
   const showClosed = params.show === "closed";
-  setTitle(showClosed ? "Closed Leads" : "Leads");
+  const statusFilter = params.status || "";
+  setTitle(statusFilter ? readable(statusFilter) : showClosed ? "Closed Leads" : "Leads");
   const leads = (showClosed ? closedLeads() : activeLeads())
+    .filter((leadItem) => !statusFilter || leadItem.status === statusFilter)
     .sort((a, b) => leadSortValue(a).localeCompare(leadSortValue(b)));
   const rows = leads.map((leadItem) => `
     <a class="list-link" href="#/leads/${leadItem.id}">
@@ -1419,9 +1754,10 @@ function renderLeads() {
     <div class="stack">
       <div class="toolbar">
         <a class="primary-action" href="#/leadform">Add lead</a>
+        ${statusFilter ? '<a class="ghost-button" href="#/leads">Clear filter</a>' : ""}
         <a class="ghost-button" href="${showClosed ? "#/leads" : "#/leads?show=closed"}">${showClosed ? "Show active" : "Show closed"}</a>
       </div>
-      <section class="list">${rows || empty(showClosed ? "No closed leads yet." : "No active leads yet.")}</section>
+      <section class="list">${rows || empty(statusFilter ? `No active leads in ${readable(statusFilter)}.` : showClosed ? "No closed leads yet." : "No active leads yet.")}</section>
     </div>
   `;
 }
@@ -1452,6 +1788,9 @@ function renderLeadDetail(id) {
           ${metricRow("Location", leadItem.location || "Not set")}
           ${metricRow("Source", leadItem.source || "Not set")}
           ${metricRow("Next follow-up", leadItem.next_follow_up ? formatDate(leadItem.next_follow_up) : "Not set")}
+          ${metricRow("Next action", leadItem.next_action || "Not set")}
+          ${metricRow("Action due", leadItem.next_action_due_date ? formatDate(leadItem.next_action_due_date) : "Not set")}
+          ${metricRow("Last contacted", leadItem.last_contacted_at ? formatDate(leadItem.last_contacted_at) : "Not set")}
         </div>
         ${leadItem.notes ? `<p class="item-notes lead-notes">${linkify(leadItem.notes)}</p>` : ""}
       </section>
@@ -1477,6 +1816,9 @@ function renderLeadForm(params = {}, id = null) {
       ${selectField("Status", "status", leadItem.status, LEAD_STATUS_OPTIONS)}
       ${selectField("Priority", "priority", leadItem.priority, PRIORITY_OPTIONS)}
       ${field("Next follow-up", "next_follow_up", "date", leadItem.next_follow_up)}
+      ${field("Next action", "next_action", "text", leadItem.next_action, "full")}
+      ${field("Action due", "next_action_due_date", "date", leadItem.next_action_due_date)}
+      ${field("Last contacted", "last_contacted_at", "date", leadItem.last_contacted_at)}
       ${textareaField("Notes", "notes", leadItem.notes, "full")}
       <div class="form-actions">
         <button class="primary-action" type="submit">Save</button>
@@ -1610,10 +1952,11 @@ function toggleLeadClosed(id) {
 }
 
 function renderJobs() {
-  setTitle("Jobs");
   const params = getRoute().params;
   const showClosed = params.show === "closed";
-  const jobs = showClosed ? closedJobs() : openJobs();
+  const statusFilter = params.status || "";
+  setTitle(statusFilter ? readable(statusFilter) : showClosed ? "Closed Jobs" : "Jobs");
+  const jobs = (showClosed ? closedJobs() : openJobs()).filter((jobItem) => !statusFilter || jobItem.status === statusFilter);
   const rows = jobs
     .sort((a, b) => jobStageSort(a.status) - jobStageSort(b.status) || labelForJob(a).localeCompare(labelForJob(b)))
     .map((jobItem) => {
@@ -1642,9 +1985,10 @@ function renderJobs() {
         <a class="primary-action" href="#/jobform">New job</a>
         <a class="primary-action" href="#/add">Add item</a>
         <a class="ghost-button" href="#/stages">Stages</a>
+        ${statusFilter ? '<a class="ghost-button" href="#/jobs">Clear filter</a>' : ""}
         <a class="ghost-button" href="${showClosed ? "#/jobs" : "#/jobs?show=closed"}">${showClosed ? "Show open" : "Show complete/cancelled"}</a>
       </div>
-      <section class="list">${rows || empty(showClosed ? "No completed or cancelled jobs yet." : "No open jobs yet.")}</section>
+      <section class="list">${rows || empty(statusFilter ? `No open jobs in ${readable(statusFilter)}.` : showClosed ? "No completed or cancelled jobs yet." : "No open jobs yet.")}</section>
     </div>
   `;
 }
@@ -1662,6 +2006,10 @@ function renderJobForm(params = {}) {
       ${field("Job name", "job_name", "text", params.name || "", "full", true)}
       ${field("Location", "location", "text", params.location || "", "full")}
       ${selectField("Starting stage", "status", params.status || "job_accepted", JOB_STAGE_OPTIONS)}
+      ${selectField("Priority", "priority", params.priority || "normal", PRIORITY_OPTIONS)}
+      ${field("Target install date", "target_install_date", "date", params.target_install_date || "")}
+      ${field("Next action", "next_action", "text", params.next_action || "", "full")}
+      ${field("Action due", "next_action_due_date", "date", params.next_action_due_date || "")}
       <div class="form-actions full">
         <button class="primary-action" type="submit">Create job</button>
         <a class="ghost-button" href="#/jobs">Cancel</a>
@@ -1679,6 +2027,10 @@ function renderJobForm(params = {}) {
       form.get("location"),
       form.get("status") || "job_accepted",
     );
+    newJob.priority = form.get("priority") || "normal";
+    newJob.target_install_date = form.get("target_install_date") || "";
+    newJob.next_action = form.get("next_action") || "";
+    newJob.next_action_due_date = form.get("next_action_due_date") || "";
     newJob.active = newJob.status !== "archived";
     state.jobs.unshift(newJob);
     saveState();
@@ -1713,6 +2065,18 @@ function renderJobDetail(id) {
           <button class="primary-action" type="submit">Update</button>
         </form>
       </section>
+      <section class="panel">
+        <h2>Next Action</h2>
+        <form class="form-grid" id="jobPlanningForm">
+          ${selectField("Priority", "priority", jobItem.priority || "normal", PRIORITY_OPTIONS)}
+          ${field("Target install date", "target_install_date", "date", jobItem.target_install_date || "")}
+          ${field("Next action", "next_action", "text", jobItem.next_action || "", "full")}
+          ${field("Action due", "next_action_due_date", "date", jobItem.next_action_due_date || "")}
+          <div class="form-actions full">
+            <button class="primary-action" type="submit">Save planning</button>
+          </div>
+        </form>
+      </section>
       ${qcWarning ? `<section class="warning-panel"><strong>QC checklist incomplete.</strong><br><span>Complete QC or use a checklist override before marking this job complete.</span></section>` : ""}
       ${renderJobChecklistArea(id)}
       <section>
@@ -1737,6 +2101,10 @@ function renderJobDetail(id) {
   document.getElementById("jobStageForm").addEventListener("submit", (event) => {
     event.preventDefault();
     setJobStage(id, new FormData(event.currentTarget).get("status"));
+  });
+  document.getElementById("jobPlanningForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    updateJobPlanning(id, Object.fromEntries(new FormData(event.currentTarget).entries()));
   });
   document.getElementById("completeJobButton").addEventListener("click", () => toggleJobComplete(id));
   document.getElementById("cancelJobButton").addEventListener("click", () => toggleJobCancelled(id));
@@ -1830,6 +2198,21 @@ function setJobStage(jobId, status) {
   jobItem.updated_at = nowIso();
   saveState();
   navigate(CLOSED_JOB_STATUSES.has(jobItem.status) ? "/jobs" : `/jobs/${jobId}`);
+}
+
+function updateJobPlanning(jobId, values) {
+  const jobItem = jobById(jobId);
+  if (!jobItem) return;
+  Object.assign(jobItem, {
+    priority: values.priority || "normal",
+    target_install_date: values.target_install_date || "",
+    next_action: values.next_action || "",
+    next_action_due_date: values.next_action_due_date || "",
+    updated_at: nowIso(),
+  });
+  saveState();
+  toast("Job planning saved.");
+  render();
 }
 
 function toggleJobCancelled(jobId) {
@@ -2807,6 +3190,51 @@ function formatDate(value) {
   if (!value) return "";
   const date = new Date(`${value}T00:00:00`);
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+function fullDateLabel() {
+  return new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+}
+
+function localDateKey(offsetDays = 0) {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + offsetDays);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isDueOrOverdue(value) {
+  return Boolean(value && value <= localDateKey());
+}
+
+function isWithinDays(value, days) {
+  return Boolean(value && value >= localDateKey() && value <= localDateKey(days));
+}
+
+function dueLabel(value) {
+  if (!value) return "";
+  if (value < localDateKey()) return `Overdue ${formatDate(value)}`;
+  if (value === localDateKey()) return "Due today";
+  if (value === localDateKey(1)) return "Due tomorrow";
+  return formatDate(value);
+}
+
+function dueBadge(value) {
+  if (!value) return "Open";
+  if (value < localDateKey()) return "Overdue";
+  if (value === localDateKey()) return "Today";
+  return "Soon";
+}
+
+function dueSeverity(value) {
+  return value && value <= localDateKey() ? "urgent" : "warning";
+}
+
+function dueReason(label, value) {
+  return `${label} ${value && value < localDateKey() ? "overdue" : "due"}`;
 }
 
 function formatDateTime(value) {

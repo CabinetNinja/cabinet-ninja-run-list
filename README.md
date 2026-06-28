@@ -5,11 +5,13 @@ Cabinet Ninja pickup/order list MVP.
 ## What is included
 
 - Mobile-first supplier pickup/order lists.
+- Cabinet Ninja front-page dashboard with urgent actions, stuck leads/jobs, run-list warnings, checklists, upcoming work, and invoice prompts.
 - Quick add form with supplier, job, category, type, status, needed-by, priority, notes, and product link.
 - Supplier view with active item counts and supplier-only detail.
 - Job view with outstanding item counts and job detail grouped by supplier.
 - Job-based packing and QC completion checklists generated from editable templates.
 - Lightweight lead tracking with follow-up dates, lead statuses, and conversion into jobs.
+- Lead and job next-action fields for daily dashboard follow-up.
 - Auto-numbered jobs using the Cabinet Ninja `CN-####` format.
 - Lead/job stage pipeline: To measure up, To quote, Quoted, Job accepted/declined, Materials, Cut/build, Load, Install, and completion stages.
 - Open Jobs hides complete/cancelled/archived jobs by default, with a separate completed/cancelled view.
@@ -57,6 +59,8 @@ The schema enables row level security and lets authenticated Supabase users read
 For an existing Supabase project that already has the original Run List tables, run `supabase-checklists-migration.sql` once to add the checklist tables.
 
 Run `supabase-leads-migration.sql` once to add the lead tracking table to an existing project.
+
+Run `supabase-dashboard-migration.sql` once on existing projects to add next-action and target install date fields used by the dashboard.
 
 ## Running locally
 

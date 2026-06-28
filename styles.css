@@ -210,6 +210,57 @@ a.plain-button {
   gap: 10px;
 }
 
+.dashboard-hero {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.dashboard-hero h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.dashboard-date {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-actions .primary-action,
+.quick-actions .ghost-button {
+  min-height: 50px;
+}
+
+.dashboard-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.dashboard-card {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.attention-card {
+  border-left: 5px solid var(--yellow);
+}
+
+.compact-dashboard-list {
+  margin-top: 8px;
+}
+
 .action-tile {
   display: grid;
   gap: 8px;
@@ -252,6 +303,16 @@ a.plain-button {
 .status-pill.optional {
   color: var(--muted);
   background: #e9ece7;
+}
+
+.status-pill.urgent {
+  color: #fff;
+  background: var(--red);
+}
+
+.status-pill.warning {
+  color: #4b2815;
+  background: #fff0c2;
 }
 
 .priority-pill.low {
@@ -332,6 +393,28 @@ a.plain-button {
   border: 1px solid var(--line);
   border-radius: 8px;
   text-decoration: none;
+}
+
+.compact-link {
+  min-height: 48px;
+  padding: 10px 12px;
+}
+
+.dashboard-alert {
+  align-items: start;
+}
+
+.dashboard-alert strong {
+  display: inline-block;
+  margin-top: 6px;
+}
+
+.dashboard-alert.urgent {
+  border-left: 5px solid var(--red);
+}
+
+.dashboard-alert.warning {
+  border-left: 5px solid var(--yellow);
 }
 
 .muted {
@@ -685,6 +768,24 @@ a.plain-button {
 
   .grid-actions {
     grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .dashboard-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(420px, 0.9fr);
+    align-items: center;
+  }
+
+  .quick-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .attention-card {
+    grid-column: 1 / -1;
   }
 
   .two-col {
