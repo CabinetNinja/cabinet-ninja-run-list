@@ -426,6 +426,38 @@ a.plain-button {
   gap: 8px;
 }
 
+.status-banner {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--yellow);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.status-banner.synced {
+  border-left-color: var(--green-2);
+}
+
+.status-banner.local {
+  border-left-color: var(--yellow);
+}
+
+.status-banner span span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.auth-panel {
+  max-width: 620px;
+  margin: 28px auto;
+}
+
 .two-col {
   display: grid;
   gap: 12px;
