@@ -1301,6 +1301,10 @@ function createSupabaseStore(config) {
       const { error } = await client.from("checklist_template_items").delete().eq("id", id);
       if (error) throw error;
     },
+    async deleteJobFile(id) {
+      const { error } = await client.from("job_files").delete().eq("id", id);
+      if (error) throw error;
+    },
     async uploadJobFile(path, file) {
       if (!workshopTablesAvailable) throw new Error("Run supabase-workshop-cnc-migration.sql before uploading workshop files.");
       const { error } = await client.storage.from("job-files").upload(path, file, {
@@ -2027,6 +2031,37 @@ function itemById(id) {
 
 function jobFileById(id) {
   return state.job_files.find((item) => item.id === id);
+}
+
+function cutRevisionsUsingFile(fileId, fileKind = "") {
+  if (!fileId) return [];
+  return state.cut_pattern_revisions.filter((revision) => {
+    if (fileKind === "pdf") return revision.pdf_file_id === fileId;
+    if (fileKind === "nc") return revision.nc_file_id === fileId;
+    return revision.pdf_file_id === fileId || revision.nc_file_id === fileId;
+  });
+}
+
+function pdfUsageSummary(fileId) {
+  const revisions = cutRevisionsUsingFile(fileId, "pdf");
+  const patternIds = [...new Set(revisions.map((revision) => revision.cut_pattern_id).filter(Boolean))];
+  const patternLabels = patternIds
+    .map((patternId) => cutPatternById(patternId))
+    .filter(Boolean)
+    .map((pattern) => `${pattern.material_code || "Material"} ${pattern.pattern_number || "Pattern"}`);
+  return {
+    revisions,
+    patternIds,
+    patternLabels,
+    patternCount: patternIds.length,
+  };
+}
+
+function renderPdfUsageNote(file) {
+  if (!file) return "";
+  const usage = pdfUsageSummary(file.id);
+  if (usage.patternCount <= 1) return "";
+  return `<span class="status-pill">Shared PDF - likely all cut sheets (${usage.patternCount} patterns)</span>`;
 }
 
 function cutPatternById(id) {
@@ -3052,7 +3087,10 @@ function renderCutPatternSummary(pattern) {
       </div>
       <div class="item-controls wrap-controls">
         ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
+        ${pdf ? renderPdfUsageNote(pdf) : ""}
         ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC</a>` : '<span class="status-pill warning">NC missing</span>'}
+        ${pdf ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(pdf.id)}" type="button">Remove PDF</button>` : ""}
+        ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC</button>` : ""}
         <button class="primary-action mark-one-run" data-revision-id="${escapeAttr(current.id)}" type="button">Mark One Run Cut</button>
         <button class="ghost-button mark-many-runs" data-revision-id="${escapeAttr(current.id)}" type="button">Mark Multiple</button>
         <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(pattern.job_id)}&revision_id=${encodeURIComponent(current.id)}">Add Remake</a>
@@ -3086,7 +3124,10 @@ function renderPatternVersionHistory(pattern, revisions) {
               </div>
               <div class="item-controls wrap-controls">
                 ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View this PDF</a>` : '<span class="status-pill warning">No PDF</span>'}
+                ${pdf ? renderPdfUsageNote(pdf) : ""}
                 ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open this NC</a>` : '<span class="status-pill warning">No NC</span>'}
+                ${pdf ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(pdf.id)}" type="button">Remove PDF</button>` : ""}
+                ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC</button>` : ""}
               </div>
             </article>
           `;
@@ -3211,7 +3252,10 @@ function renderWorkshopQueueCard({ pattern, revision, jobItem }) {
       <p class="muted">${escapeHtml([jobItem.target_install_date ? `Install ${formatDate(jobItem.target_install_date)}` : "", linkedRemakes.length ? `${linkedRemakes.length} linked remakes` : "No linked remakes", jobItem.next_action].filter(Boolean).join(" - "))}</p>
       <div class="item-controls wrap-controls">
         ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
+        ${pdf ? renderPdfUsageNote(pdf) : ""}
         ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC</a>` : '<span class="status-pill warning">NC missing</span>'}
+        ${pdf ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(pdf.id)}" type="button">Remove PDF</button>` : ""}
+        ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC</button>` : ""}
         <button class="primary-action mark-one-run" data-revision-id="${escapeAttr(revision.id)}" type="button">Mark One Run Cut</button>
         <button class="ghost-button mark-many-runs" data-revision-id="${escapeAttr(revision.id)}" type="button">Mark Multiple</button>
         <a class="ghost-button" href="#/jobs/${encodeURIComponent(jobItem.id)}">Open Job</a>
@@ -3250,6 +3294,11 @@ function bindWorkshopButtons() {
       if (!Number.isInteger(quantity) || quantity < 1) return toast("Enter a whole number of 1 or more.");
       markRunsCut(button.dataset.revisionId, quantity);
     });
+  });
+  document.querySelectorAll(".delete-workshop-file").forEach((button) => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => deleteWorkshopFile(button.dataset.fileId));
   });
   document.querySelectorAll(".remake-status-select").forEach((select) => {
     if (select.dataset.bound) return;
@@ -3384,7 +3433,8 @@ async function handleFolderImportSubmit(event) {
     if (!files.length) throw new Error("No PDF or CNC files found in that folder.");
     const result = await importMaterialFolderForJob(jobItem, files, Object.fromEntries(formData.entries()));
     saveState();
-    toast(`Folder imported: ${result.patterns} pattern(s), ${result.files} file(s).`);
+    const sharedMessage = result.sharedPdf ? " Shared PDF detected and linked to all imported patterns." : "";
+    toast(`Folder imported: ${result.patterns} pattern(s), ${result.files} file(s).${sharedMessage}`);
     navigate(`/jobs/${jobId}`);
   } catch (error) {
     toast(error.message);
@@ -3422,7 +3472,7 @@ async function importMaterialFolderForJob(jobItem, files, manual = {}) {
       importCutFileGroup(jobItem, { parsed, pdf: sharedPdf, nc }, manual);
       importedPatterns += 1;
     }
-    return { files: importedFiles, patterns: importedPatterns };
+    return { files: importedFiles, patterns: importedPatterns, sharedPdf: true };
   }
 
   await importCutFilesForJob(jobItem, files, manual);
@@ -3432,6 +3482,7 @@ async function importMaterialFolderForJob(jobItem, files, manual = {}) {
       const parsed = parseMozaikFilename(file.name);
       return `${parsed.material_code || manual.material_code || "UNKNOWN"}|${normalizePatternNumber(parsed.pattern_number || "S01")}|${normalizeRevisionNumber(parsed.filename_revision || "R01")}`;
     })).size,
+    sharedPdf: false,
   };
 }
 
@@ -3588,6 +3639,57 @@ function markRunsCut(revisionId, quantity) {
   }
   saveState();
   render();
+}
+
+async function deleteWorkshopFile(fileId) {
+  const file = jobFileById(fileId);
+  if (!file) return toast("File not found.");
+  const linkedRevisions = cutRevisionsUsingFile(fileId);
+  const usage = file.file_kind === "pdf" ? pdfUsageSummary(fileId) : null;
+  const sharedWarning = usage?.patternCount > 1 ? `\n\nThis looks like a shared/all-sheets PDF used by ${usage.patternCount} patterns.` : "";
+  const confirmed = window.confirm(`Remove ${file.file_kind?.toUpperCase() || "file"}: ${file.original_filename}?\n\nThis will unlink it from ${linkedRevisions.length} revision(s) and mark affected patterns as needing the correct file re-imported.${sharedWarning}\n\nThe original file on your computer will not be deleted.`);
+  if (!confirmed) return;
+
+  linkedRevisions.forEach((revision) => {
+    let changed = false;
+    if (revision.pdf_file_id === fileId) {
+      revision.pdf_file_id = "";
+      revision.pdf_filename = "";
+      revision.file_hash_pdf = "";
+      changed = true;
+    }
+    if (revision.nc_file_id === fileId) {
+      revision.nc_file_id = "";
+      revision.nc_filename = "";
+      revision.file_hash_nc = "";
+      changed = true;
+    }
+    if (!changed) return;
+    revision.production_status = calculateProductionStatus(revision);
+    revision.review_required = true;
+    revision.review_reason = `File removed: ${file.original_filename}. Re-import the correct ${file.file_kind?.toUpperCase() || "file"}.`;
+    revision.updated_at = nowIso();
+    const pattern = cutPatternById(revision.cut_pattern_id);
+    if (pattern && pattern.current_revision_id === revision.id) {
+      pattern.status = revision.production_status;
+      pattern.updated_at = nowIso();
+    }
+  });
+
+  state.job_files = state.job_files.filter((candidate) => candidate.id !== fileId);
+  logActivity(file.job_id, "job_file", file.id, "Workshop file removed", file.original_filename, "", `${linkedRevisions.length} linked revision(s) updated`);
+  saveState();
+  if (dataStore?.deleteJobFile) {
+    try {
+      await remoteSaveQueue;
+      await dataStore.deleteJobFile(fileId);
+    } catch (error) {
+      backendStatus.message = `Delete sync error: ${error.message}`;
+      toast(backendStatus.message);
+    }
+  }
+  render();
+  toast("File removed. Re-import the correct file when ready.");
 }
 
 function updateRemakeStatus(remakeId, status) {
