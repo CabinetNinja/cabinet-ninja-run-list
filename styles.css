@@ -807,6 +807,37 @@ a.plain-button {
   gap: 10px;
 }
 
+.version-history {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.version-history summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.version-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.version-row {
+  align-items: start;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 10px;
+}
+
+.version-row.danger-state {
+  border-color: var(--red);
+}
+
 @media (min-width: 720px) {
   .app-shell {
     padding-bottom: 0;

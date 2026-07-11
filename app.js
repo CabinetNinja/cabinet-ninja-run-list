@@ -3055,8 +3055,42 @@ function renderCutPatternSummary(pattern) {
         <button class="ghost-button mark-many-runs" data-revision-id="${escapeAttr(current.id)}" type="button">Mark Multiple</button>
         <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(pattern.job_id)}&revision_id=${encodeURIComponent(current.id)}">Add Remake</a>
       </div>
-      ${revisions.length > 1 ? `<details><summary>Revision history (${revisions.length})</summary>${revisions.map((revision) => `<p class="muted">${escapeHtml(revision.filename_revision)} internal v${revision.internal_revision} — ${escapeHtml(readable(revision.production_status))} — ${revision.completed_run_quantity}/${revision.required_run_quantity}</p>`).join("")}</details>` : ""}
+      ${renderPatternVersionHistory(pattern, revisions)}
     </article>
+  `;
+}
+
+function renderPatternVersionHistory(pattern, revisions) {
+  if (!revisions.length) return "";
+  return `
+    <details class="version-history" ${revisions.length > 1 ? "open" : ""}>
+      <summary>PDF / NC versions (${revisions.length})</summary>
+      <div class="version-list">
+        ${revisions.map((revision) => {
+          const pdf = jobFileById(revision.pdf_file_id);
+          const nc = jobFileById(revision.nc_file_id);
+          const labels = [
+            revision.is_current ? "Current" : "",
+            revision.is_superseded ? "Superseded — Do Not Cut" : "",
+            revision.review_required ? "Review required" : "",
+          ].filter(Boolean);
+          return `
+            <article class="version-row ${revision.is_superseded ? "danger-state" : ""}">
+              <div>
+                <strong>${escapeHtml(pattern.pattern_number)} ${escapeHtml(revision.filename_revision)} — internal v${escapeHtml(revision.internal_revision)}</strong>
+                <p class="muted">${escapeHtml([readable(revision.production_status), `${revision.completed_run_quantity}/${revision.required_run_quantity} cut`, ...labels].filter(Boolean).join(" - "))}</p>
+                <p class="muted">PDF: ${escapeHtml(revision.pdf_filename || "Missing")}<br>NC: ${escapeHtml(revision.nc_filename || "Missing")}</p>
+                ${revision.review_reason ? `<p class="danger-text">${escapeHtml(revision.review_reason)}</p>` : ""}
+              </div>
+              <div class="item-controls wrap-controls">
+                ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View this PDF</a>` : '<span class="status-pill warning">No PDF</span>'}
+                ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open this NC</a>` : '<span class="status-pill warning">No NC</span>'}
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </details>
   `;
 }
 
@@ -3239,6 +3273,7 @@ function renderCutImportForm(params = {}) {
       ${field("Revision override", "filename_revision", "text", params.filename_revision || "")}
       ${textareaField("Import notes", "revision_notes", "", "full")}
       <section class="warning-panel full">
+        <strong>PDF versions:</strong> To add a revised PDF, use this same form. Upload the new PDF/NC pair and enter the new revision, for example <strong>R02</strong>. If Mozaik reused the same filename but the file changed, Run List keeps the old PDF and creates an internal version for review.<br><br>
         <strong>Safety:</strong> Run List stores CNC files and tracks cutting progress. It does not execute, edit, or interpret G-code.
       </section>
       <div class="form-actions full">
