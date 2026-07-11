@@ -726,6 +726,87 @@ a.plain-button {
   display: none !important;
 }
 
+.workshop-dashboard .dashboard-hero {
+  align-items: flex-start;
+}
+
+.workshop-stats {
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+}
+
+.compact-stat {
+  min-height: auto;
+}
+
+.compact-stat strong {
+  display: block;
+  color: var(--green-2);
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.compact-stat span,
+.run-progress span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.workshop-panel,
+.workshop-card {
+  display: grid;
+  gap: 12px;
+}
+
+.workshop-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.workshop-card.danger-state {
+  border-color: var(--red);
+}
+
+.danger-text {
+  background: #fff0f0;
+  border: 1px solid #f0b8b8;
+  border-radius: 12px;
+  color: #8a2626;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.run-progress {
+  display: grid;
+  gap: 6px;
+}
+
+.progress-bar {
+  background: #dfe9e6;
+  border-radius: 999px;
+  height: 9px;
+  overflow: hidden;
+}
+
+.progress-bar span {
+  background: var(--green-2);
+  display: block;
+  height: 100%;
+}
+
+.wrap-controls {
+  flex-wrap: wrap;
+}
+
+.status-pill.warning {
+  background: #fff4d9;
+  color: #7a4b00;
+}
+
+.remake-row {
+  gap: 10px;
+}
+
 @media (min-width: 720px) {
   .app-shell {
     padding-bottom: 0;

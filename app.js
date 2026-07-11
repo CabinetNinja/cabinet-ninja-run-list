@@ -11,6 +11,13 @@ const TABLES = [
   "job_checklists",
   "job_checklist_sections",
   "job_checklist_items",
+  "job_files",
+  "cut_patterns",
+  "cut_pattern_revisions",
+  "cut_runs",
+  "cut_part_suggestions",
+  "remake_requests",
+  "activity_history",
 ];
 
 const STATUS_OPTIONS = [
@@ -40,6 +47,56 @@ const CLOSED_JOB_STATUSES = new Set(["complete", "completed", "done", "cancelled
 const CLOSED_LEAD_STATUSES = new Set(["job_accepted", "job_declined", "accepted", "won", "lost", "cancelled"]);
 const JOB_NUMBER_PREFIX = "CN";
 const JOB_NUMBER_PAD = 4;
+
+const CNC_FILE_EXTENSIONS = new Set(["nc", "cnc", "tap", "gcode"]);
+const CUT_PATTERN_STATUS_OPTIONS = [
+  ["files_incomplete", "Files incomplete"],
+  ["ready_for_cnc", "Ready for CNC"],
+  ["cutting", "Cutting"],
+  ["partially_cut", "Partially cut"],
+  ["cut_complete", "Cut complete"],
+  ["problem", "Problem"],
+  ["superseded", "Superseded"],
+  ["cancelled", "Cancelled"],
+];
+
+const REMAKE_STATUS_OPTIONS = [
+  ["requested", "Requested"],
+  ["waiting_to_add_to_mozaik", "Waiting to add to Mozaik"],
+  ["added_to_mozaik", "Added to Mozaik"],
+  ["waiting_for_updated_files", "Waiting for updated files"],
+  ["ready_for_cnc", "Ready for CNC"],
+  ["cut", "Cut"],
+  ["edge_banding", "Edge banding"],
+  ["quality_check", "Quality check"],
+  ["returned_to_job", "Returned to job"],
+  ["cancelled", "Cancelled"],
+];
+
+const REMAKE_REASON_OPTIONS = [
+  ["damaged_during_cnc_cutting", "Damaged during CNC cutting"],
+  ["incorrect_dimensions", "Incorrect dimensions"],
+  ["edge_bander_damage", "Edge bander damage"],
+  ["assembly_damage", "Assembly damage"],
+  ["packing_damage", "Packing damage"],
+  ["transport_damage", "Transport damage"],
+  ["installation_damage", "Installation damage"],
+  ["material_defect", "Material defect"],
+  ["missing_part", "Missing part"],
+  ["design_change", "Design change"],
+  ["customer_change", "Customer change"],
+  ["other", "Other"],
+];
+
+const DAMAGE_STAGE_OPTIONS = [
+  ["cnc", "CNC"],
+  ["edge_banding", "Edge Banding"],
+  ["assembly", "Assembly"],
+  ["packing", "Packing"],
+  ["transport", "Transport"],
+  ["installation", "Installation"],
+  ["unknown", "Unknown"],
+];
 
 const LEAD_STATUS_OPTIONS = [
   ["new_lead", "New lead"],
@@ -200,6 +257,13 @@ const DEFAULT_DATA = {
   job_checklists: [],
   job_checklist_sections: [],
   job_checklist_items: [],
+  job_files: [],
+  cut_patterns: [],
+  cut_pattern_revisions: [],
+  cut_runs: [],
+  cut_part_suggestions: [],
+  remake_requests: [],
+  activity_history: [],
 };
 
 const seedItems = [
@@ -262,6 +326,7 @@ let backendStatus = {
 };
 let remoteSaveQueue = Promise.resolve();
 let dashboardColumnsAvailable = true;
+let workshopTablesAvailable = true;
 
 const app = document.getElementById("app");
 const title = document.getElementById("screenTitle");
@@ -754,6 +819,237 @@ function normalizeState(data) {
       issue_status: item.issue_status || "none",
       sort_order: Number(item.sort_order || 0),
     })),
+    job_files: (data.job_files || []).map((item) => ({
+      job_id: "",
+      storage_path: "",
+      file_url: "",
+      file_kind: "",
+      original_filename: "",
+      internal_filename: "",
+      file_hash: "",
+      file_size: 0,
+      mime_type: "",
+      imported_at: "",
+      imported_by: "",
+      source: "manual_upload",
+      notes: "",
+      is_superseded: false,
+      ...item,
+      job_id: item.job_id || "",
+      storage_path: item.storage_path || "",
+      file_url: item.file_url || "",
+      file_kind: item.file_kind || "",
+      original_filename: item.original_filename || "",
+      internal_filename: item.internal_filename || "",
+      file_hash: item.file_hash || "",
+      file_size: Number(item.file_size || 0),
+      mime_type: item.mime_type || "",
+      imported_at: item.imported_at || "",
+      imported_by: item.imported_by || "",
+      source: item.source || "manual_upload",
+      notes: item.notes || "",
+      is_superseded: Boolean(item.is_superseded),
+    })),
+    cut_patterns: (data.cut_patterns || []).map((item) => ({
+      job_id: "",
+      material_code: "",
+      material_description: "",
+      thickness: "",
+      pattern_number: "",
+      current_revision_id: "",
+      status: "files_incomplete",
+      created_at: "",
+      updated_at: "",
+      ...item,
+      job_id: item.job_id || "",
+      material_code: item.material_code || "",
+      material_description: item.material_description || "",
+      thickness: item.thickness || "",
+      pattern_number: normalizePatternNumber(item.pattern_number || "S01"),
+      current_revision_id: item.current_revision_id || "",
+      status: item.status || "files_incomplete",
+    })),
+    cut_pattern_revisions: (data.cut_pattern_revisions || []).map((item) => ({
+      cut_pattern_id: "",
+      job_id: "",
+      filename_revision: "R01",
+      internal_revision: 1,
+      required_run_quantity: 1,
+      completed_run_quantity: 0,
+      pdf_file_id: "",
+      nc_file_id: "",
+      pdf_filename: "",
+      nc_filename: "",
+      file_hash_pdf: "",
+      file_hash_nc: "",
+      is_current: true,
+      is_superseded: false,
+      imported_at: "",
+      imported_by: "",
+      revision_notes: "",
+      production_status: "files_incomplete",
+      review_required: false,
+      review_reason: "",
+      created_at: "",
+      updated_at: "",
+      ...item,
+      cut_pattern_id: item.cut_pattern_id || "",
+      job_id: item.job_id || "",
+      filename_revision: normalizeRevisionNumber(item.filename_revision || "R01"),
+      internal_revision: Number(item.internal_revision || 1),
+      required_run_quantity: Number(item.required_run_quantity || 1),
+      completed_run_quantity: Number(item.completed_run_quantity || 0),
+      pdf_file_id: item.pdf_file_id || "",
+      nc_file_id: item.nc_file_id || "",
+      pdf_filename: item.pdf_filename || "",
+      nc_filename: item.nc_filename || "",
+      file_hash_pdf: item.file_hash_pdf || "",
+      file_hash_nc: item.file_hash_nc || "",
+      is_current: item.is_current !== false,
+      is_superseded: Boolean(item.is_superseded),
+      imported_at: item.imported_at || "",
+      imported_by: item.imported_by || "",
+      revision_notes: item.revision_notes || "",
+      production_status: item.production_status || "files_incomplete",
+      review_required: Boolean(item.review_required),
+      review_reason: item.review_reason || "",
+    })),
+    cut_runs: (data.cut_runs || []).map((item) => ({
+      cut_pattern_revision_id: "",
+      run_number: 0,
+      status: "complete",
+      started_at: "",
+      started_by: "",
+      completed_at: "",
+      completed_by: "",
+      notes: "",
+      has_problem: false,
+      created_at: "",
+      updated_at: "",
+      ...item,
+      cut_pattern_revision_id: item.cut_pattern_revision_id || "",
+      run_number: Number(item.run_number || 0),
+      status: item.status || "complete",
+      started_at: item.started_at || "",
+      started_by: item.started_by || "",
+      completed_at: item.completed_at || "",
+      completed_by: item.completed_by || "",
+      notes: item.notes || "",
+      has_problem: Boolean(item.has_problem),
+    })),
+    cut_part_suggestions: (data.cut_part_suggestions || []).map((item) => ({
+      cut_pattern_revision_id: "",
+      source_part_number: "",
+      part_name: "",
+      width: "",
+      length: "",
+      banding: "",
+      cabinet_number: "",
+      comment: "",
+      pdf_page_number: "",
+      raw_text: "",
+      created_at: "",
+      updated_at: "",
+      ...item,
+      cut_pattern_revision_id: item.cut_pattern_revision_id || "",
+      source_part_number: item.source_part_number || "",
+      part_name: item.part_name || "",
+      width: item.width || "",
+      length: item.length || "",
+      banding: item.banding || "",
+      cabinet_number: item.cabinet_number || "",
+      comment: item.comment || "",
+      pdf_page_number: item.pdf_page_number || "",
+      raw_text: item.raw_text || "",
+    })),
+    remake_requests: (data.remake_requests || []).map((item) => ({
+      job_id: "",
+      source_cut_pattern_revision_id: "",
+      destination_cut_pattern_revision_id: "",
+      source_part_suggestion_id: "",
+      part_number: "",
+      part_name: "",
+      description: "",
+      cabinet_number: "",
+      quantity: 1,
+      material_code: "",
+      material_description: "",
+      thickness: "",
+      width: "",
+      length: "",
+      banding: "",
+      reason: "other",
+      damage_stage: "unknown",
+      notes: "",
+      priority: "normal",
+      required_by: "",
+      status: "waiting_to_add_to_mozaik",
+      assigned_person: "",
+      requested_by: "",
+      requested_at: "",
+      added_to_mozaik_at: "",
+      cut_confirmed_at: "",
+      cut_confirmed_by: "",
+      quality_checked_at: "",
+      returned_to_job_at: "",
+      photo_url: "",
+      created_at: "",
+      updated_at: "",
+      ...item,
+      job_id: item.job_id || "",
+      source_cut_pattern_revision_id: item.source_cut_pattern_revision_id || "",
+      destination_cut_pattern_revision_id: item.destination_cut_pattern_revision_id || "",
+      source_part_suggestion_id: item.source_part_suggestion_id || "",
+      part_number: item.part_number || "",
+      part_name: item.part_name || "",
+      description: item.description || "",
+      cabinet_number: item.cabinet_number || "",
+      quantity: Number(item.quantity || 1),
+      material_code: item.material_code || "",
+      material_description: item.material_description || "",
+      thickness: item.thickness || "",
+      width: item.width || "",
+      length: item.length || "",
+      banding: item.banding || "",
+      reason: item.reason || "other",
+      damage_stage: item.damage_stage || "unknown",
+      notes: item.notes || "",
+      priority: item.priority || "normal",
+      required_by: item.required_by || "",
+      status: item.status || "waiting_to_add_to_mozaik",
+      assigned_person: item.assigned_person || "",
+      requested_by: item.requested_by || "",
+      requested_at: item.requested_at || "",
+      added_to_mozaik_at: item.added_to_mozaik_at || "",
+      cut_confirmed_at: item.cut_confirmed_at || "",
+      cut_confirmed_by: item.cut_confirmed_by || "",
+      quality_checked_at: item.quality_checked_at || "",
+      returned_to_job_at: item.returned_to_job_at || "",
+      photo_url: item.photo_url || "",
+    })),
+    activity_history: (data.activity_history || []).map((item) => ({
+      job_id: "",
+      entity_type: "",
+      entity_id: "",
+      action: "",
+      user_email: "",
+      happened_at: "",
+      previous_value: "",
+      new_value: "",
+      reason: "",
+      notes: "",
+      ...item,
+      job_id: item.job_id || "",
+      entity_type: item.entity_type || "",
+      entity_id: item.entity_id || "",
+      action: item.action || "",
+      user_email: item.user_email || "",
+      happened_at: item.happened_at || "",
+      previous_value: item.previous_value || "",
+      new_value: item.new_value || "",
+      reason: item.reason || "",
+      notes: item.notes || "",
+    })),
   };
   ensureDefaultChecklistTemplates(normalized);
   return normalized;
@@ -821,7 +1117,17 @@ function createSupabaseStore(config) {
     return data.session;
   }
 
+  async function optionalWorkshopQuery(query) {
+    const result = await query;
+    if (!result.error) return result;
+    if (!isMissingWorkshopTableError(result.error)) throw result.error;
+    workshopTablesAvailable = false;
+    backendStatus.message = "Synced without Workshop/CNC tables; run supabase-workshop-cnc-migration.sql";
+    return { data: [], error: null };
+  }
+
   async function loadTables() {
+    workshopTablesAvailable = true;
     const [
       suppliers,
       leads,
@@ -834,6 +1140,13 @@ function createSupabaseStore(config) {
       jobChecklists,
       jobChecklistSections,
       jobChecklistItems,
+      jobFiles,
+      cutPatterns,
+      cutPatternRevisions,
+      cutRuns,
+      cutPartSuggestions,
+      remakeRequests,
+      activityHistory,
     ] = await Promise.all([
       client.from("suppliers").select("*").order("supplier_name"),
       client.from("leads").select("*").order("created_at", { ascending: false }),
@@ -846,6 +1159,13 @@ function createSupabaseStore(config) {
       client.from("job_checklists").select("*").order("created_at", { ascending: false }),
       client.from("job_checklist_sections").select("*").order("sort_order"),
       client.from("job_checklist_items").select("*").order("sort_order"),
+      optionalWorkshopQuery(client.from("job_files").select("*").order("imported_at", { ascending: false })),
+      optionalWorkshopQuery(client.from("cut_patterns").select("*").order("updated_at", { ascending: false })),
+      optionalWorkshopQuery(client.from("cut_pattern_revisions").select("*").order("imported_at", { ascending: false })),
+      optionalWorkshopQuery(client.from("cut_runs").select("*").order("completed_at", { ascending: false })),
+      optionalWorkshopQuery(client.from("cut_part_suggestions").select("*").order("created_at", { ascending: false })),
+      optionalWorkshopQuery(client.from("remake_requests").select("*").order("created_at", { ascending: false })),
+      optionalWorkshopQuery(client.from("activity_history").select("*").order("happened_at", { ascending: false }).limit(400)),
     ]);
 
     const result = {
@@ -860,6 +1180,13 @@ function createSupabaseStore(config) {
       job_checklists: jobChecklists,
       job_checklist_sections: jobChecklistSections,
       job_checklist_items: jobChecklistItems,
+      job_files: jobFiles,
+      cut_patterns: cutPatterns,
+      cut_pattern_revisions: cutPatternRevisions,
+      cut_runs: cutRuns,
+      cut_part_suggestions: cutPartSuggestions,
+      remake_requests: remakeRequests,
+      activity_history: activityHistory,
     };
     for (const key of TABLES) {
       if (result[key].error) throw result[key].error;
@@ -877,6 +1204,13 @@ function createSupabaseStore(config) {
       job_checklists: jobChecklists.data || [],
       job_checklist_sections: jobChecklistSections.data || [],
       job_checklist_items: jobChecklistItems.data || [],
+      job_files: jobFiles.data || [],
+      cut_patterns: cutPatterns.data || [],
+      cut_pattern_revisions: cutPatternRevisions.data || [],
+      cut_runs: cutRuns.data || [],
+      cut_part_suggestions: cutPartSuggestions.data || [],
+      remake_requests: remakeRequests.data || [],
+      activity_history: activityHistory.data || [],
     });
   }
 
@@ -903,6 +1237,15 @@ function createSupabaseStore(config) {
     await upsertRows("job_checklists", normalized.job_checklists.map(cleanJobChecklist));
     await upsertRows("job_checklist_sections", normalized.job_checklist_sections.map(cleanJobChecklistSection));
     await upsertRows("job_checklist_items", normalized.job_checklist_items.map(cleanJobChecklistItem));
+    if (workshopTablesAvailable) {
+      await upsertRows("job_files", normalized.job_files.map(cleanJobFile));
+      await upsertRows("cut_patterns", normalized.cut_patterns.map(cleanCutPattern));
+      await upsertRows("cut_pattern_revisions", normalized.cut_pattern_revisions.map(cleanCutPatternRevision));
+      await upsertRows("cut_runs", normalized.cut_runs.map(cleanCutRun));
+      await upsertRows("cut_part_suggestions", normalized.cut_part_suggestions.map(cleanCutPartSuggestion));
+      await upsertRows("remake_requests", normalized.remake_requests.map(cleanRemakeRequest));
+      await upsertRows("activity_history", normalized.activity_history.map(cleanActivityHistory));
+    }
   }
 
   async function upsertRows(table, rows) {
@@ -944,7 +1287,7 @@ function createSupabaseStore(config) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteState));
       return {
         mode: "supabase",
-        message: "Synced with Supabase",
+        message: workshopTablesAvailable ? "Synced with Supabase" : backendStatus.message,
         userEmail: session?.user?.email || "",
         state: remoteState,
       };
@@ -957,6 +1300,16 @@ function createSupabaseStore(config) {
     async deleteChecklistTemplateItem(id) {
       const { error } = await client.from("checklist_template_items").delete().eq("id", id);
       if (error) throw error;
+    },
+    async uploadJobFile(path, file) {
+      if (!workshopTablesAvailable) throw new Error("Run supabase-workshop-cnc-migration.sql before uploading workshop files.");
+      const { error } = await client.storage.from("job-files").upload(path, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
+      if (error) throw error;
+      const { data } = client.storage.from("job-files").getPublicUrl(path);
+      return data?.publicUrl || "";
     },
     async signInWithEmail(email) {
       const { error } = await client.auth.signInWithOtp({
@@ -1045,6 +1398,21 @@ function stripDashboardColumns(row) {
 function isMissingDashboardColumnError(error) {
   const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
   return ["next_action", "next_action_due_date", "last_contacted_at", "target_install_date", "priority"].some((column) => message.includes(column));
+}
+
+function isMissingWorkshopTableError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return [
+    "job_files",
+    "cut_patterns",
+    "cut_pattern_revisions",
+    "cut_runs",
+    "cut_part_suggestions",
+    "remake_requests",
+    "activity_history",
+    "does not exist",
+    "schema cache",
+  ].some((part) => message.includes(part));
 }
 
 function cleanCategory(item) {
@@ -1156,6 +1524,158 @@ function cleanJobChecklistItem(item) {
   });
 }
 
+function cleanJobFile(item) {
+  return pickDefined({
+    id: item.id,
+    job_id: item.job_id,
+    storage_path: item.storage_path || null,
+    file_url: item.file_url || null,
+    file_kind: item.file_kind || "",
+    original_filename: item.original_filename || "",
+    internal_filename: item.internal_filename || "",
+    file_hash: item.file_hash || "",
+    file_size: Number(item.file_size || 0),
+    mime_type: item.mime_type || null,
+    imported_at: item.imported_at,
+    imported_by: item.imported_by || null,
+    source: item.source || "manual_upload",
+    notes: item.notes || null,
+    is_superseded: Boolean(item.is_superseded),
+  });
+}
+
+function cleanCutPattern(item) {
+  return pickDefined({
+    id: item.id,
+    job_id: item.job_id,
+    material_code: item.material_code || "",
+    material_description: item.material_description || "",
+    thickness: item.thickness || "",
+    pattern_number: item.pattern_number || "",
+    current_revision_id: item.current_revision_id || null,
+    status: item.status || "files_incomplete",
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
+function cleanCutPatternRevision(item) {
+  return pickDefined({
+    id: item.id,
+    cut_pattern_id: item.cut_pattern_id,
+    job_id: item.job_id,
+    filename_revision: item.filename_revision || "R01",
+    internal_revision: Number(item.internal_revision || 1),
+    required_run_quantity: Number(item.required_run_quantity || 1),
+    completed_run_quantity: Number(item.completed_run_quantity || 0),
+    pdf_file_id: item.pdf_file_id || null,
+    nc_file_id: item.nc_file_id || null,
+    pdf_filename: item.pdf_filename || null,
+    nc_filename: item.nc_filename || null,
+    file_hash_pdf: item.file_hash_pdf || null,
+    file_hash_nc: item.file_hash_nc || null,
+    is_current: item.is_current !== false,
+    is_superseded: Boolean(item.is_superseded),
+    imported_at: item.imported_at,
+    imported_by: item.imported_by || null,
+    revision_notes: item.revision_notes || null,
+    production_status: item.production_status || "files_incomplete",
+    review_required: Boolean(item.review_required),
+    review_reason: item.review_reason || null,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
+function cleanCutRun(item) {
+  return pickDefined({
+    id: item.id,
+    cut_pattern_revision_id: item.cut_pattern_revision_id,
+    run_number: Number(item.run_number || 0),
+    status: item.status || "complete",
+    started_at: item.started_at || null,
+    started_by: item.started_by || null,
+    completed_at: item.completed_at || null,
+    completed_by: item.completed_by || null,
+    notes: item.notes || null,
+    has_problem: Boolean(item.has_problem),
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
+function cleanCutPartSuggestion(item) {
+  return pickDefined({
+    id: item.id,
+    cut_pattern_revision_id: item.cut_pattern_revision_id,
+    source_part_number: item.source_part_number || null,
+    part_name: item.part_name || null,
+    width: item.width || null,
+    length: item.length || null,
+    banding: item.banding || null,
+    cabinet_number: item.cabinet_number || null,
+    comment: item.comment || null,
+    pdf_page_number: item.pdf_page_number || null,
+    raw_text: item.raw_text || null,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
+function cleanRemakeRequest(item) {
+  return pickDefined({
+    id: item.id,
+    job_id: item.job_id,
+    source_cut_pattern_revision_id: item.source_cut_pattern_revision_id || null,
+    destination_cut_pattern_revision_id: item.destination_cut_pattern_revision_id || null,
+    source_part_suggestion_id: item.source_part_suggestion_id || null,
+    part_number: item.part_number || null,
+    part_name: item.part_name || null,
+    description: item.description || null,
+    cabinet_number: item.cabinet_number || null,
+    quantity: Number(item.quantity || 1),
+    material_code: item.material_code || null,
+    material_description: item.material_description || null,
+    thickness: item.thickness || null,
+    width: item.width || null,
+    length: item.length || null,
+    banding: item.banding || null,
+    reason: item.reason || "other",
+    damage_stage: item.damage_stage || "unknown",
+    notes: item.notes || null,
+    priority: item.priority || "normal",
+    required_by: item.required_by || null,
+    status: item.status || "waiting_to_add_to_mozaik",
+    assigned_person: item.assigned_person || null,
+    requested_by: item.requested_by || null,
+    requested_at: item.requested_at,
+    added_to_mozaik_at: item.added_to_mozaik_at || null,
+    cut_confirmed_at: item.cut_confirmed_at || null,
+    cut_confirmed_by: item.cut_confirmed_by || null,
+    quality_checked_at: item.quality_checked_at || null,
+    returned_to_job_at: item.returned_to_job_at || null,
+    photo_url: item.photo_url || null,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
+function cleanActivityHistory(item) {
+  return pickDefined({
+    id: item.id,
+    job_id: item.job_id || null,
+    entity_type: item.entity_type || "",
+    entity_id: item.entity_id || null,
+    action: item.action || "",
+    user_email: item.user_email || null,
+    happened_at: item.happened_at,
+    previous_value: item.previous_value || null,
+    new_value: item.new_value || null,
+    reason: item.reason || null,
+    notes: item.notes || null,
+  });
+}
+
 function pickDefined(input) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
@@ -1208,6 +1728,147 @@ function createLead(input) {
   };
 }
 
+function createJobFile(input) {
+  const now = nowIso();
+  return {
+    id: uid("file"),
+    job_id: input.job_id || "",
+    storage_path: input.storage_path || "",
+    file_url: input.file_url || "",
+    file_kind: input.file_kind || "",
+    original_filename: input.original_filename || "",
+    internal_filename: input.internal_filename || "",
+    file_hash: input.file_hash || "",
+    file_size: Number(input.file_size || 0),
+    mime_type: input.mime_type || "",
+    imported_at: input.imported_at || now,
+    imported_by: input.imported_by || backendStatus.userEmail || "",
+    source: input.source || "manual_upload",
+    notes: input.notes || "",
+    is_superseded: Boolean(input.is_superseded),
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function createCutPattern(input) {
+  const now = nowIso();
+  return {
+    id: uid("pattern"),
+    job_id: input.job_id || "",
+    material_code: (input.material_code || "").toUpperCase(),
+    material_description: input.material_description || materialDescriptionFromCode(input.material_code),
+    thickness: input.thickness || thicknessFromMaterialCode(input.material_code),
+    pattern_number: normalizePatternNumber(input.pattern_number || "S01"),
+    current_revision_id: input.current_revision_id || "",
+    status: input.status || "files_incomplete",
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function createCutPatternRevision(input) {
+  const now = nowIso();
+  return {
+    id: uid("revision"),
+    cut_pattern_id: input.cut_pattern_id || "",
+    job_id: input.job_id || "",
+    filename_revision: normalizeRevisionNumber(input.filename_revision || "R01"),
+    internal_revision: Number(input.internal_revision || 1),
+    required_run_quantity: Number(input.required_run_quantity || 1),
+    completed_run_quantity: Number(input.completed_run_quantity || 0),
+    pdf_file_id: input.pdf_file_id || "",
+    nc_file_id: input.nc_file_id || "",
+    pdf_filename: input.pdf_filename || "",
+    nc_filename: input.nc_filename || "",
+    file_hash_pdf: input.file_hash_pdf || "",
+    file_hash_nc: input.file_hash_nc || "",
+    is_current: input.is_current !== false,
+    is_superseded: Boolean(input.is_superseded),
+    imported_at: input.imported_at || now,
+    imported_by: input.imported_by || backendStatus.userEmail || "",
+    revision_notes: input.revision_notes || "",
+    production_status: input.production_status || "files_incomplete",
+    review_required: Boolean(input.review_required),
+    review_reason: input.review_reason || "",
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function createCutRun(input) {
+  const now = nowIso();
+  return {
+    id: uid("run"),
+    cut_pattern_revision_id: input.cut_pattern_revision_id || "",
+    run_number: Number(input.run_number || 0),
+    status: input.status || "complete",
+    started_at: input.started_at || "",
+    started_by: input.started_by || "",
+    completed_at: input.completed_at || now,
+    completed_by: input.completed_by || backendStatus.userEmail || "",
+    notes: input.notes || "",
+    has_problem: Boolean(input.has_problem),
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function createRemakeRequest(input) {
+  const now = nowIso();
+  return {
+    id: uid("remake"),
+    job_id: input.job_id || "",
+    source_cut_pattern_revision_id: input.source_cut_pattern_revision_id || "",
+    destination_cut_pattern_revision_id: input.destination_cut_pattern_revision_id || "",
+    source_part_suggestion_id: input.source_part_suggestion_id || "",
+    part_number: input.part_number || "",
+    part_name: input.part_name || "",
+    description: input.description || "",
+    cabinet_number: input.cabinet_number || "",
+    quantity: Number(input.quantity || 1),
+    material_code: input.material_code || "",
+    material_description: input.material_description || "",
+    thickness: input.thickness || "",
+    width: input.width || "",
+    length: input.length || "",
+    banding: input.banding || "",
+    reason: input.reason || "other",
+    damage_stage: input.damage_stage || "unknown",
+    notes: input.notes || "",
+    priority: input.priority || "normal",
+    required_by: input.required_by || "",
+    status: input.status || "waiting_to_add_to_mozaik",
+    assigned_person: input.assigned_person || "",
+    requested_by: input.requested_by || backendStatus.userEmail || "",
+    requested_at: input.requested_at || now,
+    added_to_mozaik_at: input.added_to_mozaik_at || "",
+    cut_confirmed_at: input.cut_confirmed_at || "",
+    cut_confirmed_by: input.cut_confirmed_by || "",
+    quality_checked_at: input.quality_checked_at || "",
+    returned_to_job_at: input.returned_to_job_at || "",
+    photo_url: input.photo_url || "",
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function logActivity(jobId, entityType, entityId, action, previousValue = "", newValue = "", reason = "", notes = "") {
+  state.activity_history.unshift({
+    id: uid("activity"),
+    job_id: jobId || "",
+    entity_type: entityType || "",
+    entity_id: entityId || "",
+    action,
+    user_email: backendStatus.userEmail || "",
+    happened_at: nowIso(),
+    previous_value: previousValue || "",
+    new_value: newValue || "",
+    reason: reason || "",
+    notes: notes || "",
+  });
+}
+
 function render() {
   const route = getRoute();
   document.querySelectorAll(".bottom-nav a").forEach((link) => {
@@ -1225,6 +1886,9 @@ function render() {
     jobs: renderJobs,
     jobform: () => renderJobForm(route.params),
     job: () => renderJobDetail(route.id),
+    workshop: renderWorkshopDashboard,
+    cutimport: () => renderCutImportForm(route.params),
+    remakeform: () => renderRemakeForm(route.params, route.id),
     stages: renderStages,
     checklist: () => renderChecklistDetail(route.id),
     templates: renderChecklistTemplates,
@@ -1316,6 +1980,7 @@ function getRoute() {
   if (parts[0] === "templates" && parts[1]) return { name: "template", section: "templates", id: parts[1], params };
   if (parts[0] === "leads" && parts[1]) return { name: "lead", section: "leads", id: parts[1], params };
   if (parts[0] === "leadform" && parts[1]) return { name: "leadform", section: "leads", id: parts[1], params };
+  if (parts[0] === "remakeform" && parts[1]) return { name: "remakeform", section: "workshop", id: parts[1], params };
   if (parts[0] === "suppliers" && parts[1]) return { name: "supplier", section: "suppliers", id: parts[1], params };
   if (parts[0] === "jobs" && parts[1]) return { name: "job", section: "jobs", id: parts[1], params };
   if (parts[0] === "edit" && parts[1]) return { name: "edit", id: parts[1], params };
@@ -1357,6 +2022,54 @@ function categoryById(id) {
 
 function itemById(id) {
   return state.items.find((item) => item.id === id);
+}
+
+function jobFileById(id) {
+  return state.job_files.find((item) => item.id === id);
+}
+
+function cutPatternById(id) {
+  return state.cut_patterns.find((item) => item.id === id);
+}
+
+function cutRevisionById(id) {
+  return state.cut_pattern_revisions.find((item) => item.id === id);
+}
+
+function remakeById(id) {
+  return state.remake_requests.find((item) => item.id === id);
+}
+
+function cutPatternsForJob(jobId) {
+  return state.cut_patterns
+    .filter((item) => item.job_id === jobId)
+    .sort((a, b) => `${a.material_code}-${a.pattern_number}`.localeCompare(`${b.material_code}-${b.pattern_number}`));
+}
+
+function cutRevisionsForPattern(patternId) {
+  return state.cut_pattern_revisions
+    .filter((item) => item.cut_pattern_id === patternId)
+    .sort((a, b) => Number(b.is_current) - Number(a.is_current) || Number(b.internal_revision) - Number(a.internal_revision));
+}
+
+function currentCutRevisionForPattern(patternId) {
+  return state.cut_pattern_revisions.find((item) => item.cut_pattern_id === patternId && item.is_current && !item.is_superseded);
+}
+
+function cutRunsForRevision(revisionId) {
+  return state.cut_runs
+    .filter((item) => item.cut_pattern_revision_id === revisionId)
+    .sort((a, b) => Number(a.run_number) - Number(b.run_number));
+}
+
+function remakesForJob(jobId) {
+  return state.remake_requests
+    .filter((item) => item.job_id === jobId)
+    .sort((a, b) => (a.required_by || "9999").localeCompare(b.required_by || "9999") || (a.requested_at || "").localeCompare(b.requested_at || ""));
+}
+
+function openRemakes() {
+  return state.remake_requests.filter((item) => !["returned_to_job", "cancelled"].includes(item.status));
 }
 
 function activeLeads() {
@@ -1427,6 +2140,11 @@ function renderHome() {
           <div class="list">${renderStatusSummary(openJobs(), JOB_PIPELINE_STAGES, "job")}</div>
           <h3>Job warnings</h3>
           <div class="list compact-dashboard-list">${renderDashboardActionList(dashboardJobWarnings().slice(0, 5), "No active job warnings.")}</div>
+        `)}
+        ${renderDashboardCard("Workshop / CNC", "#/workshop", `
+          <div class="list">${renderWorkshopDashboardSummary()}</div>
+          <h3>Workshop warnings</h3>
+          <div class="list compact-dashboard-list">${renderDashboardActionList(dashboardWorkshopWarnings().slice(0, 5), "No workshop warnings.")}</div>
         `)}
         ${renderDashboardCard("Checklists", "#/templates", `
           <div class="list">${renderDashboardActionList(checklistWarnings, "No checklist warnings.")}</div>
@@ -1519,9 +2237,50 @@ function dashboardAttentionItems() {
   return [
     ...dashboardLeadActions(),
     ...dashboardJobWarnings(),
+    ...dashboardWorkshopWarnings(),
     ...dashboardUrgentRunItems(),
     ...dashboardChecklistWarnings(),
   ].sort((a, b) => dashboardSeveritySort(a) - dashboardSeveritySort(b) || (a.sortDate || "9999-12-31").localeCompare(b.sortDate || "9999-12-31") || a.title.localeCompare(b.title));
+}
+
+function renderWorkshopDashboardSummary() {
+  const queue = currentWorkshopQueue();
+  const remaining = queue.reduce((total, item) => total + Math.max(0, item.revision.required_run_quantity - item.revision.completed_run_quantity), 0);
+  const rows = [
+    ["Patterns ready", queue.filter((item) => item.revision.production_status === "ready_for_cnc").length],
+    ["Physical sheets remaining", remaining],
+    ["Open remakes", openRemakes().length],
+  ];
+  return rows.map(([label, count]) => `
+    <a class="list-link compact-link" href="#/workshop">
+      <strong>${escapeHtml(label)}</strong>
+      <span class="count-pill">${count}</span>
+    </a>
+  `).join("");
+}
+
+function dashboardWorkshopWarnings() {
+  const rows = [];
+  currentWorkshopQueue().forEach(({ pattern, revision, jobItem }) => {
+    const href = `#/jobs/${jobItem.id}`;
+    const label = `${labelForJob(jobItem)} ${pattern.pattern_number} ${revision.filename_revision}`;
+    if (revision.pdf_file_id && !revision.nc_file_id) rows.push(dashboardItem("CNC", label, "PDF uploaded but NC file is missing", jobItem.target_install_date, href, "warning", "NC"));
+    if (revision.nc_file_id && !revision.pdf_file_id) rows.push(dashboardItem("CNC", label, "NC file uploaded but PDF is missing", jobItem.target_install_date, href, "warning", "PDF"));
+    if (revision.review_required) rows.push(dashboardItem("CNC", label, revision.review_reason || "Revision needs review", jobItem.target_install_date, href, "urgent", "Review"));
+    if (revision.completed_run_quantity < revision.required_run_quantity && ["ready_for_cnc", "partially_cut"].includes(revision.production_status)) {
+      rows.push(dashboardItem("CNC", label, `${revision.required_run_quantity - revision.completed_run_quantity} physical run(s) remaining`, jobItem.target_install_date, href, "normal", "Cut"));
+    }
+  });
+  openRemakes().forEach((remake) => {
+    const jobItem = jobById(remake.job_id);
+    if (!jobItem) return;
+    const label = `${labelForJob(jobItem)}: ${remake.part_number || remake.part_name || remake.description || "Remake"}`;
+    if (["requested", "waiting_to_add_to_mozaik"].includes(remake.status)) rows.push(dashboardItem("Remake", label, "Not added to Mozaik yet", remake.required_by || jobItem.target_install_date, `#/remakeform/${remake.id}`, "warning", "Mozaik"));
+    if (remake.status === "waiting_for_updated_files") rows.push(dashboardItem("Remake", label, "Waiting for updated PDF/NC files", remake.required_by || jobItem.target_install_date, `#/remakeform/${remake.id}`, "warning", "Files"));
+    if (remake.status === "cut") rows.push(dashboardItem("Remake", label, "Cut remake needs edge banding / quality check", remake.required_by || jobItem.target_install_date, `#/remakeform/${remake.id}`, "warning", "QC"));
+    if (remake.required_by && remake.required_by < localDateKey()) rows.push(dashboardItem("Remake", label, "Remake overdue", remake.required_by, `#/remakeform/${remake.id}`, "urgent", "Overdue"));
+  });
+  return rows.sort((a, b) => dashboardSeveritySort(a) - dashboardSeveritySort(b) || (a.sortDate || "9999").localeCompare(b.sortDate || "9999"));
 }
 
 function dashboardLeadActions() {
@@ -2078,6 +2837,7 @@ function renderJobDetail(id) {
         </form>
       </section>
       ${qcWarning ? `<section class="warning-panel"><strong>QC checklist incomplete.</strong><br><span>Complete QC or use a checklist override before marking this job complete.</span></section>` : ""}
+      ${renderJobWorkshopArea(id)}
       ${renderJobChecklistArea(id)}
       <section>
         <div class="section-heading">
@@ -2098,6 +2858,7 @@ function renderJobDetail(id) {
   `;
 
   bindJobChecklistArea(id);
+  bindJobWorkshopArea(id);
   document.getElementById("jobStageForm").addEventListener("submit", (event) => {
     event.preventDefault();
     setJobStage(id, new FormData(event.currentTarget).get("status"));
@@ -2238,6 +2999,506 @@ function toggleJobArchived(jobId) {
   jobItem.updated_at = nowIso();
   saveState();
   navigate(jobItem.active ? `/jobs/${jobId}` : "/jobs");
+}
+
+function renderJobWorkshopArea(jobId) {
+  const patterns = cutPatternsForJob(jobId);
+  const remakes = remakesForJob(jobId).filter((item) => !["returned_to_job", "cancelled"].includes(item.status));
+  return `
+    <section class="panel workshop-panel">
+      <div class="section-heading">
+        <h2>Workshop / Mozaik</h2>
+        <span class="count-pill">${patterns.length} patterns</span>
+      </div>
+      <div class="toolbar">
+        <a class="primary-action" href="#/cutimport?job_id=${encodeURIComponent(jobId)}">Import Cut Files</a>
+        <button class="ghost-button" id="manualPatternButton" type="button">Manual Pattern</button>
+        <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(jobId)}">Add Remake</a>
+        <a class="ghost-button" href="#/workshop">Workshop Dashboard</a>
+      </div>
+      ${patterns.length ? patterns.map(renderCutPatternSummary).join("") : empty("No cut patterns imported for this job yet.")}
+      <div class="section-heading">
+        <h3>Open remakes</h3>
+        <span class="count-pill">${remakes.length}</span>
+      </div>
+      <div class="list">${remakes.length ? remakes.map(renderRemakeListRow).join("") : empty("No open remakes for this job.")}</div>
+    </section>
+  `;
+}
+
+function renderCutPatternSummary(pattern) {
+  const revisions = cutRevisionsForPattern(pattern.id);
+  const current = revisions.find((item) => item.id === pattern.current_revision_id) || revisions.find((item) => item.is_current) || revisions[0];
+  if (!current) return "";
+  const pct = current.required_run_quantity ? Math.min(100, Math.round((current.completed_run_quantity / current.required_run_quantity) * 100)) : 0;
+  const pdf = jobFileById(current.pdf_file_id);
+  const nc = jobFileById(current.nc_file_id);
+  const linkedRemakes = openRemakes().filter((item) => item.destination_cut_pattern_revision_id === current.id);
+  return `
+    <article class="workshop-card ${current.is_superseded ? "danger-state" : ""}">
+      ${current.is_superseded ? '<p class="danger-text"><strong>Superseded — Do Not Cut</strong></p>' : ""}
+      ${current.review_required ? `<p class="danger-text"><strong>Review required:</strong> ${escapeHtml(current.review_reason)}</p>` : ""}
+      <div class="item-title-line">
+        <h3>${escapeHtml(pattern.material_description || pattern.material_code)} — Pattern ${escapeHtml(pattern.pattern_number)} ${escapeHtml(current.filename_revision)}</h3>
+        <span class="status-pill">${escapeHtml(readable(current.production_status))}</span>
+      </div>
+      <p class="muted">${escapeHtml([current.pdf_filename || "PDF missing", current.nc_filename || "NC missing", `${linkedRemakes.length} linked remakes`].join(" - "))}</p>
+      <div class="run-progress">
+        <strong>${current.completed_run_quantity} of ${current.required_run_quantity} cut</strong>
+        <span>${Math.max(0, current.required_run_quantity - current.completed_run_quantity)} remaining</span>
+        <div class="progress-bar"><span style="width:${pct}%"></span></div>
+      </div>
+      <div class="item-controls wrap-controls">
+        ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
+        ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC</a>` : '<span class="status-pill warning">NC missing</span>'}
+        <button class="primary-action mark-one-run" data-revision-id="${escapeAttr(current.id)}" type="button">Mark One Run Cut</button>
+        <button class="ghost-button mark-many-runs" data-revision-id="${escapeAttr(current.id)}" type="button">Mark Multiple</button>
+        <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(pattern.job_id)}&revision_id=${encodeURIComponent(current.id)}">Add Remake</a>
+      </div>
+      ${revisions.length > 1 ? `<details><summary>Revision history (${revisions.length})</summary>${revisions.map((revision) => `<p class="muted">${escapeHtml(revision.filename_revision)} internal v${revision.internal_revision} — ${escapeHtml(readable(revision.production_status))} — ${revision.completed_run_quantity}/${revision.required_run_quantity}</p>`).join("")}</details>` : ""}
+    </article>
+  `;
+}
+
+function renderRemakeListRow(remake) {
+  const jobItem = jobById(remake.job_id);
+  const label = remake.part_number || remake.part_name || remake.description || "Remake";
+  const dims = [remake.width, remake.length].filter(Boolean).join(" x ");
+  return `
+    <article class="list-link remake-row" data-remake-id="${escapeAttr(remake.id)}">
+      <span>
+        <strong>${escapeHtml(label)}</strong><br>
+        <span class="muted">${escapeHtml([jobItem ? labelForJob(jobItem) : "", `Qty ${remake.quantity}`, remake.material_code, dims, remake.reason ? readable(remake.reason) : ""].filter(Boolean).join(" - "))}</span>
+      </span>
+      <span class="status-pill">${escapeHtml(readable(remake.status))}</span>
+    </article>
+  `;
+}
+
+function bindJobWorkshopArea(jobId) {
+  document.getElementById("manualPatternButton")?.addEventListener("click", () => createManualPatternForJob(jobId));
+  bindWorkshopButtons();
+}
+
+function renderWorkshopDashboard() {
+  setTitle("Workshop");
+  const queue = currentWorkshopQueue();
+  const remakes = openRemakes();
+  const attention = dashboardWorkshopWarnings();
+  const remaining = queue.reduce((total, item) => total + Math.max(0, item.revision.required_run_quantity - item.revision.completed_run_quantity), 0);
+  app.innerHTML = `
+    <div class="stack workshop-dashboard">
+      <section class="dashboard-hero">
+        <div>
+          <p class="dashboard-date">${escapeHtml(fullDateLabel())}</p>
+          <h2>Workshop / CNC run list</h2>
+        </div>
+        <div class="quick-actions">
+          <a class="primary-action" href="#/cutimport">Import Cut Files</a>
+          <a class="ghost-button" href="#/remakeform">Add Remake</a>
+        </div>
+      </section>
+      <div class="dashboard-grid workshop-stats">
+        ${renderWorkshopStat("Patterns ready", queue.filter((item) => item.revision.production_status === "ready_for_cnc").length)}
+        ${renderWorkshopStat("Physical sheets remaining", remaining)}
+        ${renderWorkshopStat("Partially cut", queue.filter((item) => item.revision.production_status === "partially_cut").length)}
+        ${renderWorkshopStat("File problems", queue.filter((item) => item.revision.production_status === "files_incomplete" || item.revision.review_required).length)}
+        ${renderWorkshopStat("Open remakes", remakes.length)}
+        ${renderWorkshopStat("Overdue remakes", remakes.filter((item) => item.required_by && item.required_by < localDateKey()).length)}
+      </div>
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Needs Attention</h2>
+          <span class="count-pill">${attention.length}</span>
+        </div>
+        <div class="list">${attention.length ? attention.map((item) => `
+          <a class="list-link dashboard-alert ${escapeAttr(item.severity)}" href="${escapeAttr(item.href)}">
+            <span><strong>${escapeHtml(item.title)}</strong><br><span class="muted">${escapeHtml(item.reason)}</span></span>
+            <span class="priority-pill ${escapeAttr(item.severity)}">${escapeHtml(item.badge)}</span>
+          </a>
+        `).join("") : empty("No workshop warnings right now.")}</div>
+      </section>
+      <section>
+        <div class="section-heading">
+          <h2>CNC Cut Queue</h2>
+          <span class="count-pill">${queue.length}</span>
+        </div>
+        <div class="workshop-grid">${queue.length ? queue.map((item) => renderWorkshopQueueCard(item)).join("") : empty("No current cut patterns.")}</div>
+      </section>
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Remake Queue</h2>
+          <span class="count-pill">${remakes.length}</span>
+        </div>
+        <div class="list">${remakes.length ? remakes.map(renderRemakeQueueRow).join("") : empty("No open remakes.")}</div>
+      </section>
+    </div>
+  `;
+  bindWorkshopButtons();
+}
+
+function renderWorkshopStat(label, value) {
+  return `<section class="panel dashboard-card compact-stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></section>`;
+}
+
+function currentWorkshopQueue() {
+  return state.cut_patterns
+    .map((pattern) => {
+      const revision = currentCutRevisionForPattern(pattern.id);
+      const jobItem = jobById(pattern.job_id);
+      return revision && jobItem ? { pattern, revision, jobItem } : null;
+    })
+    .filter(Boolean)
+    .filter((item) => !["cut_complete", "cancelled", "superseded"].includes(item.revision.production_status))
+    .sort((a, b) => (a.jobItem.target_install_date || "9999").localeCompare(b.jobItem.target_install_date || "9999") || a.pattern.pattern_number.localeCompare(b.pattern.pattern_number));
+}
+
+function renderWorkshopQueueCard({ pattern, revision, jobItem }) {
+  const pct = revision.required_run_quantity ? Math.min(100, Math.round((revision.completed_run_quantity / revision.required_run_quantity) * 100)) : 0;
+  const pdf = jobFileById(revision.pdf_file_id);
+  const nc = jobFileById(revision.nc_file_id);
+  const linkedRemakes = openRemakes().filter((item) => item.destination_cut_pattern_revision_id === revision.id);
+  return `
+    <article class="panel workshop-card ${revision.review_required ? "danger-state" : ""}">
+      ${revision.review_required ? `<p class="danger-text"><strong>Review required:</strong> ${escapeHtml(revision.review_reason)}</p>` : ""}
+      <div class="item-title-line">
+        <h3>${escapeHtml(labelForJob(jobItem))}</h3>
+        <span class="status-pill">${escapeHtml(readable(revision.production_status))}</span>
+      </div>
+      <p class="muted">${escapeHtml(pattern.material_description || pattern.material_code)} — Pattern ${escapeHtml(pattern.pattern_number)} — Revision ${escapeHtml(revision.filename_revision)}</p>
+      <div class="run-progress">
+        <strong>${revision.completed_run_quantity} of ${revision.required_run_quantity} cut</strong>
+        <span>${Math.max(0, revision.required_run_quantity - revision.completed_run_quantity)} remaining</span>
+        <div class="progress-bar"><span style="width:${pct}%"></span></div>
+      </div>
+      <p class="muted">${escapeHtml([jobItem.target_install_date ? `Install ${formatDate(jobItem.target_install_date)}` : "", linkedRemakes.length ? `${linkedRemakes.length} linked remakes` : "No linked remakes", jobItem.next_action].filter(Boolean).join(" - "))}</p>
+      <div class="item-controls wrap-controls">
+        ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
+        ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC</a>` : '<span class="status-pill warning">NC missing</span>'}
+        <button class="primary-action mark-one-run" data-revision-id="${escapeAttr(revision.id)}" type="button">Mark One Run Cut</button>
+        <button class="ghost-button mark-many-runs" data-revision-id="${escapeAttr(revision.id)}" type="button">Mark Multiple</button>
+        <a class="ghost-button" href="#/jobs/${encodeURIComponent(jobItem.id)}">Open Job</a>
+      </div>
+    </article>
+  `;
+}
+
+function renderRemakeQueueRow(remake) {
+  const jobItem = jobById(remake.job_id);
+  return `
+    <div class="list-link remake-row" data-remake-id="${escapeAttr(remake.id)}">
+      <span>
+        <strong>${escapeHtml(remake.part_number || remake.part_name || remake.description || "Remake")}</strong><br>
+        <span class="muted">${escapeHtml([jobItem ? labelForJob(jobItem) : "", `Qty ${remake.quantity}`, remake.material_code, remake.required_by ? `Required ${formatDate(remake.required_by)}` : "", readable(remake.reason)].filter(Boolean).join(" - "))}</span>
+      </span>
+      <span class="item-controls wrap-controls">
+        <select class="remake-status-select" data-remake-id="${escapeAttr(remake.id)}">${REMAKE_STATUS_OPTIONS.map(([value, label]) => `<option value="${value}" ${remake.status === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select>
+        <a class="ghost-button" href="#/remakeform/${encodeURIComponent(remake.id)}">Edit</a>
+      </span>
+    </div>
+  `;
+}
+
+function bindWorkshopButtons() {
+  document.querySelectorAll(".mark-one-run").forEach((button) => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => markRunsCut(button.dataset.revisionId, 1));
+  });
+  document.querySelectorAll(".mark-many-runs").forEach((button) => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => {
+      const quantity = Number(window.prompt("How many physical runs were cut?", "1"));
+      if (!Number.isInteger(quantity) || quantity < 1) return toast("Enter a whole number of 1 or more.");
+      markRunsCut(button.dataset.revisionId, quantity);
+    });
+  });
+  document.querySelectorAll(".remake-status-select").forEach((select) => {
+    if (select.dataset.bound) return;
+    select.dataset.bound = "true";
+    select.addEventListener("change", () => updateRemakeStatus(select.dataset.remakeId, select.value));
+  });
+}
+
+function renderCutImportForm(params = {}) {
+  const selectedJobId = params.job_id || "";
+  setTitle("Import Cut Files");
+  app.innerHTML = `
+    <form class="panel form-grid" id="cutImportForm">
+      ${selectField("Job", "job_id", selectedJobId, state.jobs.filter((jobItem) => jobItem.active).map((jobItem) => [jobItem.id, labelForJob(jobItem)]), true)}
+      <div class="field full">
+        <label>Mozaik PDF / NC files
+          <input name="files" type="file" multiple accept=".pdf,.nc,.cnc,.tap,.gcode,application/pdf" required />
+        </label>
+      </div>
+      ${field("Required physical runs", "required_run_quantity", "number", params.required_run_quantity || "1", "", true)}
+      ${field("Material code override", "material_code", "text", params.material_code || "")}
+      ${field("Material description", "material_description", "text", params.material_description || "")}
+      ${field("Pattern override", "pattern_number", "text", params.pattern_number || "")}
+      ${field("Revision override", "filename_revision", "text", params.filename_revision || "")}
+      ${textareaField("Import notes", "revision_notes", "", "full")}
+      <section class="warning-panel full">
+        <strong>Safety:</strong> Run List stores CNC files and tracks cutting progress. It does not execute, edit, or interpret G-code.
+      </section>
+      <div class="form-actions full">
+        <button class="primary-action" type="submit">Import files</button>
+        <a class="ghost-button" href="${selectedJobId ? `#/jobs/${encodeURIComponent(selectedJobId)}` : "#/workshop"}">Cancel</a>
+      </div>
+    </form>
+  `;
+  document.getElementById("cutImportForm").addEventListener("submit", handleCutImportSubmit);
+}
+
+async function handleCutImportSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  submit.disabled = true;
+  submit.textContent = "Importing...";
+  try {
+    const formData = new FormData(form);
+    const jobId = formData.get("job_id");
+    const jobItem = jobById(jobId);
+    if (!jobItem) throw new Error("Choose a job.");
+    const files = [...form.querySelector("input[type='file']").files];
+    if (!files.length) throw new Error("Choose at least one file.");
+    await importCutFilesForJob(jobItem, files, Object.fromEntries(formData.entries()));
+    saveState();
+    toast("Cut files imported.");
+    navigate(`/jobs/${jobId}`);
+  } catch (error) {
+    toast(error.message);
+    submit.disabled = false;
+    submit.textContent = "Import files";
+  }
+}
+
+async function importCutFilesForJob(jobItem, files, manual = {}) {
+  const groups = {};
+  for (const file of files) {
+    const parsed = parseMozaikFilename(file.name);
+    if (!parsed.file_kind) throw new Error(`Unsupported file type: ${file.name}`);
+    if (manual.material_code) parsed.material_code = String(manual.material_code).trim().toUpperCase();
+    if (manual.material_description) parsed.material_description = String(manual.material_description).trim();
+    if (manual.pattern_number) parsed.pattern_number = normalizePatternNumber(manual.pattern_number);
+    if (manual.filename_revision) parsed.filename_revision = normalizeRevisionNumber(manual.filename_revision);
+    parsed.material_code ||= "UNKNOWN";
+    parsed.material_description ||= materialDescriptionFromCode(parsed.material_code);
+    parsed.thickness ||= thicknessFromMaterialCode(parsed.material_code);
+    parsed.pattern_number = normalizePatternNumber(parsed.pattern_number || "S01");
+    parsed.filename_revision = normalizeRevisionNumber(parsed.filename_revision || "R01");
+    const record = await storeWorkshopFile(jobItem, file, parsed);
+    const key = `${parsed.material_code}|${parsed.pattern_number}|${parsed.filename_revision}`;
+    groups[key] ||= { parsed, pdf: null, nc: null };
+    groups[key][parsed.file_kind] = record;
+  }
+  Object.values(groups).forEach((group) => importCutFileGroup(jobItem, group, manual));
+}
+
+function importCutFileGroup(jobItem, group, manual = {}) {
+  const pattern = getOrCreateCutPattern(jobItem.id, group.parsed);
+  const current = currentCutRevisionForPattern(pattern.id);
+  const required = Math.max(1, Number(manual.required_run_quantity || current?.required_run_quantity || 1));
+  const sameRevision = current && current.filename_revision === group.parsed.filename_revision;
+  const changedSameName = sameRevision && (
+    (group.pdf && current.pdf_file_id && current.file_hash_pdf && current.file_hash_pdf !== group.pdf.file_hash) ||
+    (group.nc && current.nc_file_id && current.file_hash_nc && current.file_hash_nc !== group.nc.file_hash)
+  );
+  const attachMissing = sameRevision && !changedSameName && (
+    (group.pdf && !current.pdf_file_id) ||
+    (group.nc && !current.nc_file_id)
+  );
+  if (attachMissing) {
+    if (group.pdf) {
+      current.pdf_file_id = group.pdf.id;
+      current.pdf_filename = group.pdf.original_filename;
+      current.file_hash_pdf = group.pdf.file_hash;
+    }
+    if (group.nc) {
+      current.nc_file_id = group.nc.id;
+      current.nc_filename = group.nc.original_filename;
+      current.file_hash_nc = group.nc.file_hash;
+    }
+    current.production_status = calculateProductionStatus(current);
+    current.updated_at = nowIso();
+    pattern.status = current.production_status;
+    pattern.updated_at = nowIso();
+    logActivity(jobItem.id, "cut_pattern_revision", current.id, "PDF/NC paired", "", `${current.pdf_filename || "PDF missing"} + ${current.nc_filename || "NC missing"}`);
+    return;
+  }
+  const previousHadCuts = current && Number(current.completed_run_quantity || 0) > 0;
+  const revision = createCutPatternRevision({
+    cut_pattern_id: pattern.id,
+    job_id: jobItem.id,
+    filename_revision: group.parsed.filename_revision,
+    internal_revision: nextInternalRevision(pattern.id),
+    required_run_quantity: required,
+    pdf_file_id: group.pdf?.id || "",
+    nc_file_id: group.nc?.id || "",
+    pdf_filename: group.pdf?.original_filename || "",
+    nc_filename: group.nc?.original_filename || "",
+    file_hash_pdf: group.pdf?.file_hash || "",
+    file_hash_nc: group.nc?.file_hash || "",
+    revision_notes: manual.revision_notes || "",
+    review_required: Boolean(changedSameName || previousHadCuts),
+    review_reason: changedSameName ? "File changed without a filename revision increase." : previousHadCuts ? "Previous revision already has completed runs. Review remaining quantity." : "",
+  });
+  revision.production_status = calculateProductionStatus(revision);
+  state.cut_pattern_revisions.unshift(revision);
+  if (revision.review_required) {
+    revision.is_current = false;
+    logActivity(jobItem.id, "cut_pattern_revision", revision.id, "Revision imported for review", current?.id || "", revision.id, revision.review_reason);
+  } else {
+    makeRevisionCurrent(pattern, revision);
+    logActivity(jobItem.id, "cut_pattern_revision", revision.id, "Current revision changed", current?.id || "", revision.id);
+  }
+}
+
+function renderRemakeForm(params = {}, id = null) {
+  const editing = id ? remakeById(id) : null;
+  const jobId = editing?.job_id || params.job_id || "";
+  const revisionId = editing?.source_cut_pattern_revision_id || params.revision_id || "";
+  const remake = editing || createRemakeRequest({ job_id: jobId, source_cut_pattern_revision_id: revisionId });
+  setTitle(editing ? "Edit Remake" : "Add Remake");
+  app.innerHTML = `
+    <form class="panel form-grid" id="remakeForm">
+      ${selectField("Job", "job_id", remake.job_id, state.jobs.filter((jobItem) => jobItem.active).map((jobItem) => [jobItem.id, labelForJob(jobItem)]), true)}
+      ${field("Quantity", "quantity", "number", remake.quantity || 1, "", true)}
+      ${selectField("Priority", "priority", remake.priority || "normal", PRIORITY_OPTIONS)}
+      ${field("Part number", "part_number", "text", remake.part_number)}
+      ${field("Part name", "part_name", "text", remake.part_name)}
+      ${field("Description", "description", "text", remake.description, "full")}
+      ${field("Cabinet number", "cabinet_number", "text", remake.cabinet_number)}
+      ${field("Required by", "required_by", "date", remake.required_by)}
+      ${field("Material code", "material_code", "text", remake.material_code)}
+      ${field("Thickness", "thickness", "text", remake.thickness)}
+      ${field("Width", "width", "text", remake.width)}
+      ${field("Length", "length", "text", remake.length)}
+      ${field("Banding", "banding", "text", remake.banding)}
+      ${selectField("Reason", "reason", remake.reason || "other", REMAKE_REASON_OPTIONS)}
+      ${selectField("Damage stage", "damage_stage", remake.damage_stage || "unknown", DAMAGE_STAGE_OPTIONS)}
+      ${selectField("Status", "status", remake.status || "waiting_to_add_to_mozaik", REMAKE_STATUS_OPTIONS)}
+      ${field("Assigned person", "assigned_person", "text", remake.assigned_person)}
+      ${field("Photo URL", "photo_url", "url", remake.photo_url, "full")}
+      ${textareaField("Notes", "notes", remake.notes, "full")}
+      <input type="hidden" name="source_cut_pattern_revision_id" value="${escapeAttr(revisionId)}" />
+      <input type="hidden" name="destination_cut_pattern_revision_id" value="${escapeAttr(editing?.destination_cut_pattern_revision_id || "")}" />
+      <div class="form-actions full">
+        <button class="primary-action" type="submit">${editing ? "Save remake" : "Create remake"}</button>
+        <a class="ghost-button" href="${jobId ? `#/jobs/${encodeURIComponent(jobId)}` : "#/workshop"}">Cancel</a>
+      </div>
+    </form>
+  `;
+  document.getElementById("remakeForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (!values.part_number && !values.part_name && !values.description) {
+      toast("Enter a part number, part name, or short description.");
+      return;
+    }
+    if (editing) {
+      const previous = editing.status;
+      Object.assign(editing, values, {
+        quantity: Number(values.quantity || 1),
+        updated_at: nowIso(),
+      });
+      applyRemakeStatusDates(editing, previous);
+      logActivity(editing.job_id, "remake_request", editing.id, "Remake updated", previous, editing.status);
+    } else {
+      const next = createRemakeRequest(values);
+      applyRemakeStatusDates(next, "");
+      state.remake_requests.unshift(next);
+      logActivity(next.job_id, "remake_request", next.id, "Remake created", "", next.part_number || next.part_name || next.description, "", next.reason);
+    }
+    saveState();
+    navigate(values.job_id ? `/jobs/${values.job_id}` : "/workshop");
+  });
+}
+
+function markRunsCut(revisionId, quantity) {
+  const revision = cutRevisionById(revisionId);
+  if (!revision) return;
+  if (revision.is_superseded || !revision.is_current) return toast("Superseded — Do Not Cut. Use the current revision.");
+  if (!(revision.pdf_file_id && revision.nc_file_id)) return toast("PDF and NC file are required before cutting.");
+  const required = Number(revision.required_run_quantity || 0);
+  const completed = Number(revision.completed_run_quantity || 0);
+  if (completed + quantity > required) return toast(`Only ${required - completed} run(s) remaining.`);
+  const note = quantity > 1 ? window.prompt("Optional note for these runs", "") || "" : "";
+  for (let index = 1; index <= quantity; index += 1) {
+    state.cut_runs.unshift(createCutRun({
+      cut_pattern_revision_id: revisionId,
+      run_number: completed + index,
+      notes: note,
+    }));
+  }
+  revision.completed_run_quantity = completed + quantity;
+  revision.production_status = calculateProductionStatus(revision);
+  revision.updated_at = nowIso();
+  const pattern = cutPatternById(revision.cut_pattern_id);
+  if (pattern) {
+    pattern.status = revision.production_status;
+    pattern.updated_at = nowIso();
+  }
+  logActivity(revision.job_id, "cut_pattern_revision", revision.id, quantity > 1 ? "Multiple physical runs completed" : "Physical run completed", completed, revision.completed_run_quantity, "", note);
+  const linkedRemakes = openRemakes().filter((item) => item.destination_cut_pattern_revision_id === revision.id);
+  if (linkedRemakes.length) {
+    toast("Run cut. Linked remakes still need operator confirmation.");
+  } else {
+    toast(`${revision.completed_run_quantity} of ${revision.required_run_quantity} cut.`);
+  }
+  saveState();
+  render();
+}
+
+function updateRemakeStatus(remakeId, status) {
+  const remake = remakeById(remakeId);
+  if (!remake) return;
+  const previous = remake.status;
+  remake.status = status;
+  remake.updated_at = nowIso();
+  applyRemakeStatusDates(remake, previous);
+  logActivity(remake.job_id, "remake_request", remake.id, "Remake status changed", previous, status);
+  saveState();
+  render();
+}
+
+function applyRemakeStatusDates(remake, previousStatus) {
+  const now = nowIso();
+  if (remake.status === previousStatus) return;
+  if (remake.status === "added_to_mozaik") remake.added_to_mozaik_at ||= now;
+  if (remake.status === "cut") {
+    remake.cut_confirmed_at ||= now;
+    remake.cut_confirmed_by ||= backendStatus.userEmail || "";
+  }
+  if (remake.status === "quality_check") remake.quality_checked_at ||= now;
+  if (remake.status === "returned_to_job") remake.returned_to_job_at ||= now;
+}
+
+function createManualPatternForJob(jobId) {
+  const materialCode = window.prompt("Material code", "16WHMR");
+  if (!materialCode) return;
+  const patternNumber = window.prompt("Pattern number", "S01") || "S01";
+  const filenameRevision = window.prompt("Revision", "R01") || "R01";
+  const requiredRunQuantity = Number(window.prompt("Required physical runs", "1") || "1");
+  if (!Number.isInteger(requiredRunQuantity) || requiredRunQuantity < 1) return toast("Required runs must be a whole number.");
+  const pattern = getOrCreateCutPattern(jobId, {
+    material_code: materialCode,
+    pattern_number: patternNumber,
+  });
+  const revision = createCutPatternRevision({
+    cut_pattern_id: pattern.id,
+    job_id: jobId,
+    filename_revision: filenameRevision,
+    internal_revision: nextInternalRevision(pattern.id),
+    required_run_quantity: requiredRunQuantity,
+  });
+  revision.production_status = calculateProductionStatus(revision);
+  state.cut_pattern_revisions.unshift(revision);
+  makeRevisionCurrent(pattern, revision);
+  logActivity(jobId, "cut_pattern_revision", revision.id, "Manual cut pattern created", "", `${materialCode} ${patternNumber}${filenameRevision}`);
+  saveState();
+  render();
 }
 
 function renderChecklistDetail(id) {
@@ -3235,6 +4496,184 @@ function dueSeverity(value) {
 
 function dueReason(label, value) {
   return `${label} ${value && value < localDateKey() ? "overdue" : "due"}`;
+}
+
+function fileExtension(filename) {
+  const match = String(filename || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match ? match[1] : "";
+}
+
+function fileKindForName(filename) {
+  const ext = fileExtension(filename);
+  if (ext === "pdf") return "pdf";
+  if (CNC_FILE_EXTENSIONS.has(ext)) return "nc";
+  return "";
+}
+
+function parseMozaikFilename(filename) {
+  const original = String(filename || "").trim();
+  const base = original.replace(/\.[^.]+$/, "");
+  const parsed = {
+    original_filename: original,
+    file_kind: fileKindForName(original),
+    job_name: "",
+    material_code: "",
+    material_description: "",
+    thickness: "",
+    pattern_number: "",
+    filename_revision: "",
+  };
+  const match = base.match(/^(.*)_([^_]+)_(S\d+)(R\d+)$/i);
+  if (match) {
+    parsed.job_name = match[1].replace(/_+/g, " ").trim();
+    parsed.material_code = match[2].toUpperCase();
+    parsed.pattern_number = match[3].toUpperCase();
+    parsed.filename_revision = match[4].toUpperCase();
+    parsed.thickness = thicknessFromMaterialCode(parsed.material_code);
+    parsed.material_description = materialDescriptionFromCode(parsed.material_code);
+  }
+  return parsed;
+}
+
+function normalizePatternNumber(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  const number = raw.match(/\d+/)?.[0] || "1";
+  return `S${String(Number(number)).padStart(2, "0")}`;
+}
+
+function normalizeRevisionNumber(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  const number = raw.match(/\d+/)?.[0] || "1";
+  return `R${String(Number(number)).padStart(2, "0")}`;
+}
+
+function thicknessFromMaterialCode(code) {
+  return String(code || "").match(/^(\d+(?:\.\d+)?)/)?.[1] || "";
+}
+
+function materialDescriptionFromCode(code) {
+  const materialCode = String(code || "").toUpperCase();
+  if (!materialCode) return "";
+  const thickness = thicknessFromMaterialCode(materialCode);
+  const material = materialCode
+    .replace(/^\d+(?:\.\d+)?/, "")
+    .replace(/WHMR/g, " White HMR")
+    .replace(/HMR/g, " HMR")
+    .replace(/MR/g, " MR")
+    .trim() || materialCode;
+  return [thickness ? `${thickness}mm` : "", material].filter(Boolean).join(" ");
+}
+
+function calculateProductionStatus(revision) {
+  if (revision.is_superseded) return "superseded";
+  if (!(revision.pdf_file_id && revision.nc_file_id)) return "files_incomplete";
+  if (Number(revision.completed_run_quantity || 0) <= 0) return "ready_for_cnc";
+  if (Number(revision.completed_run_quantity || 0) >= Number(revision.required_run_quantity || 0)) return "cut_complete";
+  return "partially_cut";
+}
+
+function getOrCreateCutPattern(jobId, details) {
+  const materialCode = (details.material_code || "UNKNOWN").toUpperCase();
+  const patternNumber = normalizePatternNumber(details.pattern_number || "S01");
+  let pattern = state.cut_patterns.find((item) =>
+    item.job_id === jobId &&
+    item.material_code.toUpperCase() === materialCode &&
+    item.pattern_number.toUpperCase() === patternNumber
+  );
+  if (pattern) return pattern;
+  pattern = createCutPattern({
+    job_id: jobId,
+    material_code: materialCode,
+    material_description: details.material_description || materialDescriptionFromCode(materialCode),
+    thickness: details.thickness || thicknessFromMaterialCode(materialCode),
+    pattern_number: patternNumber,
+  });
+  state.cut_patterns.unshift(pattern);
+  logActivity(jobId, "cut_pattern", pattern.id, "Cut pattern created", "", `${materialCode} ${patternNumber}`);
+  return pattern;
+}
+
+function nextInternalRevision(patternId) {
+  return state.cut_pattern_revisions
+    .filter((item) => item.cut_pattern_id === patternId)
+    .reduce((max, item) => Math.max(max, Number(item.internal_revision || 0)), 0) + 1;
+}
+
+function makeRevisionCurrent(pattern, revision) {
+  state.cut_pattern_revisions.forEach((candidate) => {
+    if (candidate.cut_pattern_id !== pattern.id || candidate.id === revision.id || !candidate.is_current) return;
+    candidate.is_current = false;
+    candidate.is_superseded = true;
+    candidate.production_status = candidate.completed_run_quantity > 0 && candidate.completed_run_quantity < candidate.required_run_quantity ? "partially_cut" : "superseded";
+    candidate.updated_at = nowIso();
+    logActivity(candidate.job_id, "cut_pattern_revision", candidate.id, "Revision superseded", "current", "superseded", "New current revision selected");
+  });
+  revision.is_current = true;
+  revision.is_superseded = false;
+  revision.review_required = false;
+  revision.production_status = calculateProductionStatus(revision);
+  revision.updated_at = nowIso();
+  pattern.current_revision_id = revision.id;
+  pattern.status = revision.production_status;
+  pattern.updated_at = nowIso();
+}
+
+async function hashFile(file) {
+  const buffer = await file.arrayBuffer();
+  if (window.crypto?.subtle) {
+    const digest = await crypto.subtle.digest("SHA-256", buffer);
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function storeWorkshopFile(jobItem, file, parsed) {
+  const hash = await hashFile(file);
+  const ext = fileExtension(file.name);
+  const internalName = [
+    jobItem.job_number || jobItem.id,
+    parsed.material_code || "UNKNOWN",
+    `${parsed.pattern_number || "S01"}${parsed.filename_revision || "R01"}`,
+    Date.now(),
+    `${uid("f").replace(/[^a-z0-9]/gi, "")}.${ext}`,
+  ].join("_");
+  const storagePath = `${jobItem.id}/${internalName}`;
+  let fileUrl = "";
+  let storage_path = storagePath;
+  try {
+    if (dataStore?.uploadJobFile) {
+      fileUrl = await dataStore.uploadJobFile(storagePath, file);
+    } else {
+      fileUrl = await fileToDataUrl(file);
+      storage_path = "";
+    }
+  } catch (error) {
+    fileUrl = await fileToDataUrl(file);
+    storage_path = "";
+    toast(`Storage upload failed; kept ${file.name} in local/browser data.`);
+  }
+  const record = createJobFile({
+    job_id: jobItem.id,
+    storage_path,
+    file_url: fileUrl,
+    file_kind: parsed.file_kind,
+    original_filename: file.name,
+    internal_filename: internalName,
+    file_hash: hash,
+    file_size: file.size,
+    mime_type: file.type || (parsed.file_kind === "pdf" ? "application/pdf" : "text/plain"),
+  });
+  state.job_files.unshift(record);
+  return record;
 }
 
 function formatDateTime(value) {

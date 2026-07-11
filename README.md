@@ -18,6 +18,7 @@ Cabinet Ninja pickup/order list MVP.
 - Checklist progress, required item completion rules, notes, photo-link fields, and override completion notes.
 - Status/orders view.
 - Completed history with reopen support for run-list items and retained completed checklists.
+- Workshop/CNC run-list dashboard with Mozaik PDF/NC imports, repeated physical run tracking, and remake queue.
 - Search across item, supplier, job, category, status, type, and notes.
 - Editable supplier list for adding and hiding suppliers.
 - PWA files: `manifest.webmanifest`, `service-worker.js`, and `icon.svg`.
@@ -62,6 +63,8 @@ Run `supabase-leads-migration.sql` once to add the lead tracking table to an exi
 
 Run `supabase-dashboard-migration.sql` once on existing projects to add next-action and target install date fields used by the dashboard.
 
+Run `supabase-workshop-cnc-migration.sql` once on existing projects to add the Workshop/CNC cut pattern, file import, physical run, remake, and activity-history tables. It also creates a public Supabase Storage bucket named `job-files` for uploaded Mozaik PDFs and NC/CNC/TAP/GCODE files.
+
 ## Running locally
 
 Open `index.html` directly for a quick check, or serve the folder over HTTP for full PWA behavior.
@@ -87,7 +90,41 @@ Use `supabase-schema.sql` as the first backend shape. The existing app data name
 - `job_checklists`
 - `job_checklist_sections`
 - `job_checklist_items`
+- `job_files`
+- `cut_patterns`
+- `cut_pattern_revisions`
+- `cut_runs`
+- `cut_part_suggestions`
+- `remake_requests`
+- `activity_history`
 - `material_templates`
 - `material_template_items`
 
 The material template tables are included only so the database will not fight later material-template work. The checklist template tables are used by the MVP.
+
+## Workshop / CNC workflow
+
+Open the live app at:
+
+```text
+https://cabinetninja.github.io/cabinet-ninja-run-list/#/
+```
+
+Use the **Workshop** tab for the CNC computer or workshop tablet.
+
+Basic flow:
+
+1. Open a job.
+2. Click **Import Cut Files**.
+3. Upload the Mozaik PDF and matching `.NC`, `.CNC`, `.TAP`, or `.GCODE` file.
+4. Enter the number of physical runs required. Example: if the PDF says `Sheets: 6`, enter `6`.
+5. The Workshop dashboard will show progress such as `0 of 6 cut`, `3 of 6 cut`, and `6 of 6 cut`.
+6. Use **Mark One Run Cut** after one physical sheet has been cut.
+7. Use **Add Remake** or the **Remake Queue** for damaged/missing/incorrect parts.
+
+Safety rules built into the app:
+
+- CNC files are stored only; the app does not execute or edit G-code.
+- A superseded revision is labelled **Superseded — Do Not Cut**.
+- Completed runs cannot exceed the required run count.
+- If a file changes without a filename revision increase, the new version is held for review instead of silently replacing the old one.
