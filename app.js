@@ -1888,6 +1888,7 @@ function render() {
     job: () => renderJobDetail(route.id),
     workshop: renderWorkshopDashboard,
     cutimport: () => renderCutImportForm(route.params),
+    folderimport: () => renderMaterialFolderImportForm(route.params),
     remakeform: () => renderRemakeForm(route.params, route.id),
     stages: renderStages,
     checklist: () => renderChecklistDetail(route.id),
@@ -3012,6 +3013,7 @@ function renderJobWorkshopArea(jobId) {
       </div>
       <div class="toolbar">
         <a class="primary-action" href="#/cutimport?job_id=${encodeURIComponent(jobId)}">Import Cut Files</a>
+        <a class="primary-action" href="#/folderimport?job_id=${encodeURIComponent(jobId)}">Import Material Folder</a>
         <button class="ghost-button" id="manualPatternButton" type="button">Manual Pattern</button>
         <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(jobId)}">Add Remake</a>
         <a class="ghost-button" href="#/workshop">Workshop Dashboard</a>
@@ -3129,6 +3131,7 @@ function renderWorkshopDashboard() {
         </div>
         <div class="quick-actions">
           <a class="primary-action" href="#/cutimport">Import Cut Files</a>
+          <a class="primary-action" href="#/folderimport">Import Material Folder</a>
           <a class="ghost-button" href="#/remakeform">Add Remake</a>
         </div>
       </section>
@@ -3329,6 +3332,107 @@ async function importCutFilesForJob(jobItem, files, manual = {}) {
     groups[key][parsed.file_kind] = record;
   }
   Object.values(groups).forEach((group) => importCutFileGroup(jobItem, group, manual));
+}
+
+function renderMaterialFolderImportForm(params = {}) {
+  const selectedJobId = params.job_id || "";
+  setTitle("Import Material Folder");
+  app.innerHTML = `
+    <form class="panel form-grid" id="folderImportForm">
+      ${selectField("Job", "job_id", selectedJobId, state.jobs.filter((jobItem) => jobItem.active).map((jobItem) => [jobItem.id, labelForJob(jobItem)]), true)}
+      <div class="field full">
+        <label>Material folder
+          <input name="files" type="file" multiple webkitdirectory directory accept=".pdf,.nc,.cnc,.tap,.gcode,application/pdf" required />
+        </label>
+      </div>
+      ${field("Material code override", "material_code", "text", params.material_code || "")}
+      ${field("Material description", "material_description", "text", params.material_description || "")}
+      ${field("Default physical runs per pattern", "required_run_quantity", "number", params.required_run_quantity || "1", "", true)}
+      <div class="field full checkbox-field">
+        <label>
+          <input name="shared_pdf" type="checkbox" checked />
+          One PDF contains all sheets/patterns in this material folder
+        </label>
+      </div>
+      ${textareaField("Import notes", "revision_notes", "Folder import / rescan", "full")}
+      <section class="warning-panel full">
+        <strong>Folder rescan:</strong> Choose the same folder again later to pick up new or changed files. Run List compares file hashes, keeps old versions, and flags changed files for review where needed.<br><br>
+        <strong>Shared PDF:</strong> If the folder has one full cut-sheet PDF plus many NC files, the same PDF will be linked to every imported pattern.
+      </section>
+      <div class="form-actions full">
+        <button class="primary-action" type="submit">Scan and import folder</button>
+        <a class="ghost-button" href="${selectedJobId ? `#/jobs/${encodeURIComponent(selectedJobId)}` : "#/workshop"}">Cancel</a>
+      </div>
+    </form>
+  `;
+  document.getElementById("folderImportForm").addEventListener("submit", handleFolderImportSubmit);
+}
+
+async function handleFolderImportSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector("button[type='submit']");
+  submit.disabled = true;
+  submit.textContent = "Scanning folder...";
+  try {
+    const formData = new FormData(form);
+    const jobId = formData.get("job_id");
+    const jobItem = jobById(jobId);
+    if (!jobItem) throw new Error("Choose a job.");
+    const files = [...form.querySelector("input[type='file']").files]
+      .filter((file) => fileKindForName(file.name));
+    if (!files.length) throw new Error("No PDF or CNC files found in that folder.");
+    const result = await importMaterialFolderForJob(jobItem, files, Object.fromEntries(formData.entries()));
+    saveState();
+    toast(`Folder imported: ${result.patterns} pattern(s), ${result.files} file(s).`);
+    navigate(`/jobs/${jobId}`);
+  } catch (error) {
+    toast(error.message);
+    submit.disabled = false;
+    submit.textContent = "Scan and import folder";
+  }
+}
+
+async function importMaterialFolderForJob(jobItem, files, manual = {}) {
+  const pdfFiles = files.filter((file) => fileKindForName(file.name) === "pdf");
+  const ncFiles = files.filter((file) => fileKindForName(file.name) === "nc");
+  const sharedPdfMode = manual.shared_pdf === "on" && pdfFiles.length === 1 && ncFiles.length > 0;
+  let importedFiles = 0;
+  let importedPatterns = 0;
+
+  if (sharedPdfMode) {
+    const sharedParsed = parseMozaikFilename(pdfFiles[0].name);
+    if (manual.material_code) sharedParsed.material_code = String(manual.material_code).trim().toUpperCase();
+    sharedParsed.material_code ||= "SHARED";
+    sharedParsed.pattern_number = normalizePatternNumber(sharedParsed.pattern_number || "S01");
+    sharedParsed.filename_revision = normalizeRevisionNumber(sharedParsed.filename_revision || "R01");
+    const sharedPdf = await storeWorkshopFile(jobItem, pdfFiles[0], sharedParsed);
+    importedFiles += 1;
+    for (const file of ncFiles) {
+      const parsed = parseMozaikFilename(file.name);
+      if (manual.material_code) parsed.material_code = String(manual.material_code).trim().toUpperCase();
+      if (manual.material_description) parsed.material_description = String(manual.material_description).trim();
+      parsed.material_code ||= sharedParsed.material_code || "UNKNOWN";
+      parsed.material_description ||= manual.material_description || materialDescriptionFromCode(parsed.material_code);
+      parsed.thickness ||= thicknessFromMaterialCode(parsed.material_code);
+      parsed.pattern_number = normalizePatternNumber(parsed.pattern_number || "S01");
+      parsed.filename_revision = normalizeRevisionNumber(parsed.filename_revision || sharedParsed.filename_revision || "R01");
+      const nc = await storeWorkshopFile(jobItem, file, parsed);
+      importedFiles += 1;
+      importCutFileGroup(jobItem, { parsed, pdf: sharedPdf, nc }, manual);
+      importedPatterns += 1;
+    }
+    return { files: importedFiles, patterns: importedPatterns };
+  }
+
+  await importCutFilesForJob(jobItem, files, manual);
+  return {
+    files: files.length,
+    patterns: new Set(files.map((file) => {
+      const parsed = parseMozaikFilename(file.name);
+      return `${parsed.material_code || manual.material_code || "UNKNOWN"}|${normalizePatternNumber(parsed.pattern_number || "S01")}|${normalizeRevisionNumber(parsed.filename_revision || "R01")}`;
+    })).size,
+  };
 }
 
 function importCutFileGroup(jobItem, group, manual = {}) {
@@ -4673,6 +4777,13 @@ function fileToDataUrl(file) {
 
 async function storeWorkshopFile(jobItem, file, parsed) {
   const hash = await hashFile(file);
+  const existing = state.job_files.find((item) =>
+    item.job_id === jobItem.id &&
+    item.original_filename === file.name &&
+    item.file_hash === hash &&
+    item.file_kind === parsed.file_kind
+  );
+  if (existing) return existing;
   const ext = fileExtension(file.name);
   const internalName = [
     jobItem.job_number || jobItem.id,
