@@ -327,6 +327,8 @@ let backendStatus = {
 let remoteSaveQueue = Promise.resolve();
 let dashboardColumnsAvailable = true;
 let workshopTablesAvailable = true;
+let dymoLabelState = { labels: [], sheetFilter: "all", includeSeparators: true, edgeOrder: "left,top,right,bottom" };
+let pdfJsModule = null;
 
 const app = document.getElementById("app");
 const title = document.getElementById("screenTitle");
@@ -1893,6 +1895,7 @@ function render() {
     workshop: renderWorkshopDashboard,
     cutimport: () => renderCutImportForm(route.params),
     folderimport: () => renderMaterialFolderImportForm(route.params),
+    dymolabels: () => renderDymoLabelPrintForm(route.params),
     remakeform: () => renderRemakeForm(route.params, route.id),
     stages: renderStages,
     checklist: () => renderChecklistDetail(route.id),
@@ -3049,6 +3052,7 @@ function renderJobWorkshopArea(jobId) {
       <div class="toolbar">
         <a class="primary-action" href="#/cutimport?job_id=${encodeURIComponent(jobId)}">Import Cut Files</a>
         <a class="primary-action" href="#/folderimport?job_id=${encodeURIComponent(jobId)}">Import Material Folder</a>
+        <a class="ghost-button" href="#/dymolabels?job_id=${encodeURIComponent(jobId)}">Print Dymo Labels</a>
         <button class="ghost-button" id="manualPatternButton" type="button">Manual Pattern</button>
         <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(jobId)}">Add Remake</a>
         <a class="ghost-button" href="#/workshop">Workshop Dashboard</a>
@@ -3173,6 +3177,7 @@ function renderWorkshopDashboard() {
         <div class="quick-actions">
           <a class="primary-action" href="#/cutimport">Import Cut Files</a>
           <a class="primary-action" href="#/folderimport">Import Material Folder</a>
+          <a class="ghost-button" href="#/dymolabels">Print Dymo Labels</a>
           <a class="ghost-button" href="#/remakeform">Add Remake</a>
         </div>
       </section>
@@ -3486,6 +3491,342 @@ async function importMaterialFolderForJob(jobItem, files, manual = {}) {
   };
 }
 
+function renderDymoLabelPrintForm(params = {}) {
+  const selectedJobId = params.job_id || "";
+  setTitle("Dymo Labels");
+  const jobOptions = state.jobs.filter((jobItem) => jobItem.active).map((jobItem) => [jobItem.id, labelForJob(jobItem)]);
+  app.innerHTML = `
+    <section class="panel form-grid dymo-label-panel">
+      <div class="full">
+        <h2>Print Dymo 11352 part labels</h2>
+        <p class="muted">Upload a Mozaik cut-sheet PDF. Run List reads the part table, uses the banding numbers as arrows, and prints labels relative to the PDF sheet picture.</p>
+      </div>
+      ${selectField("Job", "job_id", selectedJobId, jobOptions, false)}
+      <div class="field">
+        <label>Mozaik cut-sheet PDF
+          <input id="dymoPdfFile" type="file" accept="application/pdf,.pdf" required />
+        </label>
+      </div>
+      <div class="field">
+        <label>Edge order from Band column
+          <select id="dymoEdgeOrder">
+            <option value="left,top,right,bottom" ${dymoLabelState.edgeOrder === "left,top,right,bottom" ? "selected" : ""}>Left, Top, Right, Bottom</option>
+            <option value="top,right,bottom,left" ${dymoLabelState.edgeOrder === "top,right,bottom,left" ? "selected" : ""}>Top, Right, Bottom, Left</option>
+            <option value="left,right,top,bottom" ${dymoLabelState.edgeOrder === "left,right,top,bottom" ? "selected" : ""}>Left, Right, Top, Bottom</option>
+          </select>
+        </label>
+      </div>
+      <div class="field">
+        <label>Print selection
+          <select id="dymoSheetFilter">
+            ${sheetOptionsForDymoLabels()}
+          </select>
+        </label>
+      </div>
+      <div class="field checkbox-field">
+        <label>
+          <input id="dymoIncludeSeparators" type="checkbox" ${dymoLabelState.includeSeparators ? "checked" : ""} />
+          Add separator label with sheet number and material
+        </label>
+      </div>
+      <div class="form-actions full">
+        <button class="primary-action" id="dymoParseButton" type="button">Read PDF</button>
+        <button class="ghost-button" id="dymoPrintButton" type="button" ${dymoLabelState.labels.length ? "" : "disabled"}>Print labels</button>
+        <a class="ghost-button" href="${selectedJobId ? `#/jobs/${encodeURIComponent(selectedJobId)}` : "#/workshop"}">Back</a>
+      </div>
+      <section class="warning-panel full">
+        <strong>Label rule:</strong> arrows are relative to the PDF sheet picture. Non-zero banding numbers print arrows; zero prints nothing. Default order is <strong>left, top, right, bottom</strong>.
+      </section>
+      <p class="muted full" id="dymoLabelStatus">${dymoLabelState.labels.length ? `${dymoLabelState.labels.length} label(s) ready.` : "Choose a PDF and click Read PDF."}</p>
+    </section>
+    <section class="panel full dymo-preview-panel">
+      <div class="section-heading">
+        <h2>Preview</h2>
+        <span class="count-pill">Dymo 11352</span>
+      </div>
+      <div id="dymoLabelPreview"></div>
+    </section>
+  `;
+  bindDymoLabelPrinter();
+  renderDymoLabelPreview();
+}
+
+function bindDymoLabelPrinter() {
+  document.getElementById("dymoParseButton")?.addEventListener("click", handleDymoPdfParse);
+  document.getElementById("dymoPrintButton")?.addEventListener("click", () => window.print());
+  document.getElementById("dymoSheetFilter")?.addEventListener("change", (event) => {
+    dymoLabelState.sheetFilter = event.target.value;
+    renderDymoLabelPreview();
+  });
+  document.getElementById("dymoIncludeSeparators")?.addEventListener("change", (event) => {
+    dymoLabelState.includeSeparators = event.target.checked;
+    renderDymoLabelPreview();
+  });
+  document.getElementById("dymoEdgeOrder")?.addEventListener("change", (event) => {
+    dymoLabelState.edgeOrder = event.target.value;
+    dymoLabelState.labels = dymoLabelState.labels.map((label) => ({
+      ...label,
+      edges: edgesFromBandValues(label.bandValues, dymoLabelState.edgeOrder),
+    }));
+    renderDymoLabelPreview();
+  });
+}
+
+async function handleDymoPdfParse() {
+  const fileInput = document.getElementById("dymoPdfFile");
+  const button = document.getElementById("dymoParseButton");
+  const file = fileInput?.files?.[0];
+  if (!file) return toast("Choose a PDF first.");
+  button.disabled = true;
+  button.textContent = "Reading PDF...";
+  setDymoLabelStatus("Reading Mozaik PDF...");
+  try {
+    const labels = await parseDymoLabelsFromPdf(file);
+    if (!labels.length) throw new Error("No Mozaik part rows found. Check this is the cut-sheet PDF with the Part# table.");
+    dymoLabelState.labels = labels;
+    dymoLabelState.sheetFilter = "all";
+    document.getElementById("dymoSheetFilter").innerHTML = sheetOptionsForDymoLabels();
+    document.getElementById("dymoPrintButton").disabled = false;
+    renderDymoLabelPreview();
+    setDymoLabelStatus(`${labels.length} label(s) ready from ${new Set(labels.map((label) => label.sheetKey)).size} sheet(s).`);
+    toast("Dymo labels ready.");
+  } catch (error) {
+    setDymoLabelStatus(error.message);
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Read PDF";
+  }
+}
+
+function setDymoLabelStatus(message) {
+  const status = document.getElementById("dymoLabelStatus");
+  if (status) status.textContent = message;
+}
+
+async function ensurePdfJsModule() {
+  if (pdfJsModule) return pdfJsModule;
+  pdfJsModule = await import("./vendor/pdfjs/pdf.min.mjs");
+  pdfJsModule.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdfjs/pdf.worker.min.mjs", location.href).toString();
+  return pdfJsModule;
+}
+
+async function parseDymoLabelsFromPdf(file) {
+  const pdfjs = await ensurePdfJsModule();
+  const data = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data }).promise;
+  const labels = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const lines = await extractPdfTextLines(page);
+    const text = lines.join("\n");
+    const materialMatch = text.match(/Material:\s*(.+?)\s+Rev\s+#\d+\s+Pattern\s+#(\d+)\s+Sheets:\s*(\d+)/i);
+    const material = materialMatch?.[1]?.trim() || "Unknown Material";
+    const patternNumber = materialMatch?.[2] || String(pageNumber);
+    const drawingText = text.split(/Part#\s+Name\s+Width\s+Length\s+Band\s+Cab#\s+Comment/i)[0] || "";
+    const shortLabels = extractDrawingShortLabels(drawingText);
+    const rows = extractMozaikPartRows(lines);
+    rows.forEach((row) => {
+      const bandValues = parseBandValues(row.band);
+      const shortCode = shortLabels[row.partNumber] || `${formatCabForDymo(row.cab)} ${shortPartCodeFromName(row.name)}`.trim();
+      labels.push({
+        id: `dymo-${pageNumber}-${row.partNumber}`,
+        sheetKey: `${pageNumber}`,
+        sheetNumber: pageNumber,
+        patternNumber,
+        material,
+        partNumber: row.partNumber,
+        partName: row.name,
+        cab: row.cab,
+        code: shortCode.toUpperCase(),
+        width: row.width,
+        length: row.length,
+        dimensions: `${row.width} x ${row.length}`,
+        band: row.band,
+        bandValues,
+        edges: edgesFromBandValues(bandValues, dymoLabelState.edgeOrder),
+        isRemake: /\b(remake|rmk|remade)\b/i.test(`${row.name} ${row.comment}`),
+      });
+    });
+  }
+  return labels;
+}
+
+async function extractPdfTextLines(page) {
+  const content = await page.getTextContent({ disableCombineTextItems: false });
+  const rawItems = content.items
+    .map((item) => ({ text: String(item.str || "").trim(), x: item.transform[4], y: item.transform[5] }))
+    .filter((item) => item.text);
+  const lineGroups = [];
+  rawItems.forEach((item) => {
+    let group = lineGroups.find((candidate) => Math.abs(candidate.y - item.y) < 3);
+    if (!group) {
+      group = { y: item.y, items: [] };
+      lineGroups.push(group);
+    }
+    group.items.push(item);
+  });
+  return lineGroups
+    .sort((a, b) => b.y - a.y)
+    .map((line) => line.items.sort((a, b) => a.x - b.x).map((item) => item.text).join(" ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function extractMozaikPartRows(lines) {
+  const rows = [];
+  let inTable = false;
+  lines.forEach((line) => {
+    if (/^Part#\s+Name\s+Width\s+Length\s+Band\s+Cab#\s+Comment/i.test(line)) {
+      inTable = true;
+      return;
+    }
+    if (!inTable) return;
+    if (/^Page\s+\d+\s+of\s+\d+/i.test(line)) {
+      inTable = false;
+      return;
+    }
+    const match = line.match(/^(\d+)\s+(.+?)\s+([\d,.]+)\s+([\d,.]+)\s+(None|[A-Z]-\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+)\s+(R\d+(?:F\d+)?C\d+)\b\s*(.*)$/i);
+    if (!match) return;
+    rows.push({
+      partNumber: match[1],
+      name: match[2].trim(),
+      width: match[3],
+      length: match[4],
+      band: match[5].replace(/\s+/g, ""),
+      cab: match[6],
+      comment: match[7] || "",
+    });
+  });
+  return rows;
+}
+
+function extractDrawingShortLabels(drawingText) {
+  const labels = {};
+  const flat = drawingText.replace(/\s+/g, " ");
+  const pattern = /\b(R\d+(?:F\d+)?C\d+)\s+([A-Za-z][A-Za-z0-9]{1,10})\s+#\s*(\d+)\b/g;
+  let match;
+  while ((match = pattern.exec(flat))) {
+    labels[match[3]] = `${formatCabForDymo(match[1])} ${match[2]}`.trim();
+  }
+  return labels;
+}
+
+function formatCabForDymo(cab) {
+  const text = String(cab || "").toUpperCase();
+  let match = text.match(/^R1C(\d+)$/);
+  if (match) return `C${match[1]}`;
+  match = text.match(/^R1F(\d+)C(\d+)$/);
+  if (match) return `F${match[1]}C${match[2]}`;
+  return text;
+}
+
+function shortPartCodeFromName(name) {
+  const text = String(name || "");
+  if (/UEnd\s*\(L\)/i.test(text)) return "UEL";
+  if (/UEnd\s*\(R\)/i.test(text)) return "UER";
+  if (/UBack/i.test(text)) return "UB";
+  if (/Drw\s+Bottom/i.test(text)) return "DBM";
+  if (/Drw\s+Back/i.test(text)) return "DBA";
+  if (/Drawer/i.test(text)) return "DWR";
+  if (/Front\s+Stretcher/i.test(text)) return "FRS";
+  if (/Rear\s+Stretcher/i.test(text)) return "RRS";
+  if (/Adjustable\s+Shelf/i.test(text)) return "ADJSH";
+  if (/Subpanel/i.test(text)) return "SUB";
+  if (/Nailer/i.test(text)) return "NA";
+  if (/Bottom/i.test(text)) return "BOT";
+  if (/Door\s*\(R\)/i.test(text)) return "DOORR";
+  if (/Door\s*\(L\)/i.test(text)) return "DOORL";
+  if (/Panel/i.test(text)) return "PAN";
+  return text.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.replace(/[^A-Za-z0-9]/g, "").slice(0, 5)).join("").toUpperCase() || "PART";
+}
+
+function parseBandValues(band) {
+  if (!band || /^None$/i.test(band)) return [0, 0, 0, 0];
+  const values = String(band).replace(/^[A-Z]-/i, "").split(",").map((value) => Number(value.trim()) || 0);
+  while (values.length < 4) values.push(0);
+  return values.slice(0, 4);
+}
+
+function edgesFromBandValues(values, orderText) {
+  const edges = { left: false, top: false, right: false, bottom: false };
+  const order = String(orderText || "left,top,right,bottom").split(",");
+  order.forEach((side, index) => {
+    if (side in edges) edges[side] = Number(values[index] || 0) > 0;
+  });
+  return edges;
+}
+
+function sheetOptionsForDymoLabels() {
+  const selected = dymoLabelState.sheetFilter || "all";
+  const sheets = [...new Map(dymoLabelState.labels.map((label) => [label.sheetKey, label])).values()];
+  return [
+    `<option value="all" ${selected === "all" ? "selected" : ""}>All sheets</option>`,
+    ...sheets.map((label) => `<option value="${escapeAttr(label.sheetKey)}" ${selected === label.sheetKey ? "selected" : ""}>Sheet ${escapeHtml(label.sheetNumber)} - ${escapeHtml(label.material)}</option>`),
+  ].join("");
+}
+
+function visibleDymoLabels() {
+  if (dymoLabelState.sheetFilter === "all") return dymoLabelState.labels;
+  return dymoLabelState.labels.filter((label) => label.sheetKey === dymoLabelState.sheetFilter);
+}
+
+function renderDymoLabelPreview() {
+  const target = document.getElementById("dymoLabelPreview");
+  if (!target) return;
+  if (!dymoLabelState.labels.length) {
+    target.innerHTML = empty("No labels parsed yet.");
+    return;
+  }
+  target.innerHTML = `
+    <div class="dymo-preview-help muted">Preview uses the same layout as print. Use browser print and select the Dymo 11352 / 54 x 25mm label.</div>
+    <div id="dymoPrintArea" class="dymo-print-area">
+      ${renderDymoPrintableLabels()}
+    </div>
+  `;
+}
+
+function renderDymoPrintableLabels() {
+  const labels = visibleDymoLabels();
+  const groups = labels.reduce((result, label) => {
+    result[label.sheetKey] ||= [];
+    result[label.sheetKey].push(label);
+    return result;
+  }, {});
+  return Object.entries(groups).map(([sheetKey, sheetLabels]) => {
+    const first = sheetLabels[0];
+    return `
+      ${dymoLabelState.includeSeparators ? renderDymoSeparatorLabel(first) : ""}
+      ${sheetLabels.map(renderDymoPartLabel).join("")}
+    `;
+  }).join("");
+}
+
+function renderDymoSeparatorLabel(label) {
+  return `
+    <article class="dymo-label dymo-separator-label">
+      <div class="separator-stars">**************</div>
+      <div class="separator-sheet">SHEET ${escapeHtml(label.sheetNumber)}</div>
+      <div class="separator-material">${escapeHtml(label.material.toUpperCase())}</div>
+      <div class="separator-stars">**************</div>
+    </article>
+  `;
+}
+
+function renderDymoPartLabel(label) {
+  const edges = label.edges || {};
+  return `
+    <article class="dymo-label dymo-part-label" data-label-id="${escapeAttr(label.id)}">
+      <div class="dymo-arrow dymo-arrow-up">${edges.top ? "&uarr;" : ""}</div>
+      <div class="dymo-main-row">
+        <span class="dymo-arrow dymo-arrow-left">${edges.left ? "&larr;" : ""}</span>
+        <span class="dymo-part-code">${label.isRemake ? '<span class="dymo-remake">REMAKE</span>' : ""}${escapeHtml(label.code)}</span>
+        <span class="dymo-arrow dymo-arrow-right">${edges.right ? "&rarr;" : ""}</span>
+      </div>
+      <div class="dymo-arrow dymo-arrow-down">${edges.bottom ? "&darr;" : ""}</div>
+      <div class="dymo-dimensions">${escapeHtml(label.dimensions)}</div>
+    </article>
+  `;
+}
 function importCutFileGroup(jobItem, group, manual = {}) {
   const pattern = getOrCreateCutPattern(jobItem.id, group.parsed);
   const current = currentCutRevisionForPattern(pattern.id);

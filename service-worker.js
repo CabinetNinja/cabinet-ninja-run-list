@@ -1,4 +1,4 @@
-const CACHE_NAME = "cabinet-ninja-run-list-v8";
+const CACHE_NAME = "cabinet-ninja-run-list-v9";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,6 +7,8 @@ const ASSETS = [
   "./run-list-config.js",
   "./manifest.webmanifest",
   "./icon.svg",
+  "./vendor/pdfjs/pdf.min.mjs",
+  "./vendor/pdfjs/pdf.worker.min.mjs",
 ];
 
 self.addEventListener("install", (event) => {
