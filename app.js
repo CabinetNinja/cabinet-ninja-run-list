@@ -3177,65 +3177,325 @@ function renderWorkshopMobileBlocker() {
   `;
 }
 function renderWorkshopDashboard() {
-  setTitle("Workshop");
+  setTitle("Workshop / CNC");
+  const params = getRoute().params;
   const queue = currentWorkshopQueue();
-  const remakes = openRemakes();
-  const attention = dashboardWorkshopWarnings();
-  const remaining = queue.reduce((total, item) => total + Math.max(0, item.revision.required_run_quantity - item.revision.completed_run_quantity), 0);
+  const selected = workshopSelectedQueueItem(params.revision_id, queue);
+  const allCurrent = workshopCurrentPatternItems();
+  const ready = allCurrent.filter((item) => workshopQueueBucket(item) === "ready");
+  const cutting = allCurrent.filter((item) => workshopQueueBucket(item) === "cutting");
+  const problems = allCurrent.filter((item) => workshopQueueBucket(item) === "problem");
+  const selectedJobPatterns = selected ? workshopPatternItemsForJob(selected.jobItem.id) : [];
+  const selectedJobRemakes = selected ? remakesForJob(selected.jobItem.id).filter((item) => !["returned_to_job", "cancelled"].includes(item.status)) : [];
+  const activity = selected ? state.activity_history.filter((item) => item.job_id === selected.jobItem.id).slice(0, 6) : [];
+
   app.innerHTML = `
     ${renderWorkshopMobileBlocker()}
-    <div class="stack workshop-dashboard workshop-desktop-only">
-      <section class="dashboard-hero">
+    <div class="workshop-refresh workshop-desktop-only">
+      <section class="workshop-refresh-topbar">
+        <div class="workshop-brand-lockup">
+          <div class="logo-mark">CN</div>
+          <div>
+            <strong>Cabinet Ninja</strong>
+            <span>Workshop control panel</span>
+          </div>
+        </div>
         <div>
-          <p class="dashboard-date">${escapeHtml(fullDateLabel())}</p>
-          <h2>Workshop / CNC run list</h2>
+          <h2>Workshop / CNC</h2>
+          <p class="muted">Cut files, labels, remakes, and CNC progress</p>
         </div>
-        <div class="quick-actions">
-          <a class="primary-action" href="#/cutimport">Import Cut Files</a>
-          <a class="primary-action" href="#/folderimport">Select Customer Folder</a>
-          <a class="ghost-button" href="#/dymolabels">Print Dymo Labels</a>
-          <a class="ghost-button" href="#/remakeform">Add Remake</a>
+        <div class="workshop-clock">
+          <span>${escapeHtml(fullDateLabel())}</span>
+          <strong>${escapeHtml(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</strong>
+        </div>
+        <div class="workshop-top-actions">
+          <a class="primary-action" href="#/folderimport${selected ? `?job_id=${encodeURIComponent(selected.jobItem.id)}` : ""}">Select Customer Folder</a>
+          <a class="primary-action" href="#/dymolabels${selected ? `?job_id=${encodeURIComponent(selected.jobItem.id)}` : ""}">Print Dymo Labels</a>
+          <a class="primary-action" href="#/remakeform${selected ? `?job_id=${encodeURIComponent(selected.jobItem.id)}` : ""}">Add Remake</a>
         </div>
       </section>
-      <div class="dashboard-grid workshop-stats">
-        ${renderWorkshopStat("Patterns ready", queue.filter((item) => item.revision.production_status === "ready_for_cnc").length)}
-        ${renderWorkshopStat("Physical sheets remaining", remaining)}
-        ${renderWorkshopStat("Partially cut", queue.filter((item) => item.revision.production_status === "partially_cut").length)}
-        ${renderWorkshopStat("File problems", queue.filter((item) => item.revision.production_status === "files_incomplete" || item.revision.review_required).length)}
-        ${renderWorkshopStat("Open remakes", remakes.length)}
-        ${renderWorkshopStat("Overdue remakes", remakes.filter((item) => item.required_by && item.required_by < localDateKey()).length)}
-      </div>
-      <section class="panel">
-        <div class="section-heading">
-          <h2>Needs Attention</h2>
-          <span class="count-pill">${attention.length}</span>
+
+      <section class="workshop-refresh-layout">
+        <aside class="workshop-queue-sidebar">
+          ${renderWorkshopQueueSection("Jobs ready for CNC", ready, "ready", selected?.revision.id)}
+          ${renderWorkshopQueueSection("Jobs cutting", cutting, "cutting", selected?.revision.id)}
+          ${renderWorkshopQueueSection("Jobs with problems", problems, "problem", selected?.revision.id)}
+        </aside>
+
+        <div class="workshop-main-board">
+          ${selected ? renderWorkshopCurrentJobHero(selected) : renderWorkshopEmptyHero()}
+          ${selected ? `
+            <section class="workshop-board-grid">
+              <div class="workshop-board-main stack">
+                ${renderWorkshopFileHealthCard(selected, selectedJobPatterns)}
+                ${renderWorkshopCutPatternsTable(selected, selectedJobPatterns)}
+              </div>
+              <aside class="workshop-board-side stack">
+                ${renderWorkshopRemakesCard(selected, selectedJobRemakes)}
+                ${renderWorkshopDymoCard(selected)}
+                ${renderWorkshopActivityCard(activity)}
+              </aside>
+            </section>
+          ` : `
+            <section class="panel">
+              <h2>No CNC patterns yet</h2>
+              <p class="muted">Select a customer folder or import cut files to start building the workshop queue.</p>
+            </section>
+          `}
         </div>
-        <div class="list">${attention.length ? attention.map((item) => `
-          <a class="list-link dashboard-alert ${escapeAttr(item.severity)}" href="${escapeAttr(item.href)}">
-            <span><strong>${escapeHtml(item.title)}</strong><br><span class="muted">${escapeHtml(item.reason)}</span></span>
-            <span class="priority-pill ${escapeAttr(item.severity)}">${escapeHtml(item.badge)}</span>
-          </a>
-        `).join("") : empty("No workshop warnings right now.")}</div>
       </section>
-      <section>
-        <div class="section-heading">
-          <h2>CNC Cut Queue</h2>
-          <span class="count-pill">${queue.length}</span>
-        </div>
-        <div class="workshop-grid">${queue.length ? queue.map((item) => renderWorkshopQueueCard(item)).join("") : empty("No current cut patterns.")}</div>
-      </section>
-      <section class="panel">
-        <div class="section-heading">
-          <h2>Remake Queue</h2>
-          <span class="count-pill">${remakes.length}</span>
-        </div>
-        <div class="list">${remakes.length ? remakes.map(renderRemakeQueueRow).join("") : empty("No open remakes.")}</div>
-      </section>
+
+      <p class="workshop-tip">Tip: keep your Mozaik cut-sheet PDF named <strong>sheets.pdf</strong> for best auto-detection. Rescan the customer folder any time to pick up updates or remakes.</p>
     </div>
   `;
   bindWorkshopButtons();
 }
 
+function workshopCurrentPatternItems() {
+  return state.cut_patterns
+    .map((pattern) => {
+      const revision = currentCutRevisionForPattern(pattern.id);
+      const jobItem = jobById(pattern.job_id);
+      return revision && jobItem ? { pattern, revision, jobItem } : null;
+    })
+    .filter(Boolean)
+    .filter((item) => !["cancelled", "superseded"].includes(item.revision.production_status))
+    .sort((a, b) => (a.jobItem.target_install_date || "9999").localeCompare(b.jobItem.target_install_date || "9999") || labelForJob(a.jobItem).localeCompare(labelForJob(b.jobItem)) || a.pattern.pattern_number.localeCompare(b.pattern.pattern_number));
+}
+
+function workshopSelectedQueueItem(revisionId, queue) {
+  const all = workshopCurrentPatternItems();
+  if (revisionId) {
+    const selected = all.find((item) => item.revision.id === revisionId);
+    if (selected) return selected;
+  }
+  return queue[0] || all.find((item) => workshopQueueBucket(item) === "problem") || all[0] || null;
+}
+
+function workshopPatternItemsForJob(jobId) {
+  return cutPatternsForJob(jobId)
+    .map((pattern) => ({ pattern, revision: currentCutRevisionForPattern(pattern.id), jobItem: jobById(jobId) }))
+    .filter((item) => item.revision);
+}
+
+function workshopQueueBucket({ revision }) {
+  if (revision.review_required || revision.production_status === "problem" || !(revision.pdf_file_id && revision.nc_file_id)) return "problem";
+  if (["cutting", "partially_cut"].includes(revision.production_status)) return "cutting";
+  return "ready";
+}
+
+function workshopStatusPill(revision) {
+  if (revision.review_required) return { label: "Review required", tone: "urgent" };
+  if (!revision.pdf_file_id) return { label: "PDF missing", tone: "urgent" };
+  if (!revision.nc_file_id) return { label: "NC missing", tone: "warning" };
+  if (revision.production_status === "cut_complete") return { label: "Cut complete", tone: "good" };
+  return { label: readable(revision.production_status), tone: revision.production_status === "ready_for_cnc" ? "good" : "" };
+}
+
+function renderWorkshopQueueSection(titleText, items, bucket, selectedRevisionId) {
+  return `
+    <section class="panel workshop-queue-section ${escapeAttr(bucket)}">
+      <div class="section-heading">
+        <h2>${escapeHtml(titleText)}</h2>
+        <span class="count-pill">${items.length}</span>
+      </div>
+      <div class="workshop-queue-list">
+        ${items.slice(0, 8).map((item) => renderWorkshopQueueMiniCard(item, selectedRevisionId)).join("") || empty("Nothing here right now.")}
+      </div>
+    </section>
+  `;
+}
+
+function renderWorkshopQueueMiniCard({ pattern, revision, jobItem }, selectedRevisionId) {
+  const status = workshopStatusPill(revision);
+  const active = revision.id === selectedRevisionId;
+  return `
+    <a class="workshop-mini-job ${active ? "active" : ""}" href="#/workshop?revision_id=${encodeURIComponent(revision.id)}">
+      <span class="mini-job-icon">${status.tone === "urgent" ? "!" : "&check;"}</span>
+      <span class="mini-job-body">
+        <strong>${escapeHtml(labelForJob(jobItem))}</strong>
+        <span>${escapeHtml([pattern.material_description || pattern.material_code, pattern.pattern_number, jobItem.location].filter(Boolean).join(" - "))}</span>
+      </span>
+      <span class="status-pill ${escapeAttr(status.tone)}">${escapeHtml(status.label)}</span>
+    </a>
+  `;
+}
+
+function renderWorkshopEmptyHero() {
+  return `
+    <section class="panel workshop-current-hero">
+      <div>
+        <p class="muted">Current Job</p>
+        <h2>No current CNC job</h2>
+        <p class="muted">Import cut files or select a customer folder to populate this dashboard.</p>
+      </div>
+      <div class="workshop-hero-actions">
+        <a class="primary-action" href="#/folderimport">Select Customer Folder</a>
+        <a class="ghost-button" href="#/cutimport">Import Cut Files</a>
+      </div>
+    </section>
+  `;
+}
+
+function renderWorkshopCurrentJobHero({ pattern, revision, jobItem }) {
+  const pdf = jobFileById(revision.pdf_file_id);
+  const status = workshopStatusPill(revision);
+  return `
+    <section class="panel workshop-current-hero ${status.tone === "urgent" ? "danger-state" : ""}">
+      <div class="workshop-current-title">
+        <p class="muted">Current Job</p>
+        <h2>${escapeHtml(labelForJob(jobItem))}</h2>
+        <span class="status-pill ${escapeAttr(status.tone)}">${escapeHtml(status.label)}</span>
+      </div>
+      <div class="workshop-hero-meta">
+        ${renderWorkshopMeta("Client", jobItem.client_name || "Not set")}
+        ${renderWorkshopMeta("Location", jobItem.location || "Not set")}
+        ${renderWorkshopMeta("Target install", jobItem.target_install_date ? formatDate(jobItem.target_install_date) : "Not set")}
+        ${renderWorkshopMeta("Pattern", `${pattern.material_description || pattern.material_code} ${pattern.pattern_number}`)}
+      </div>
+      <div class="workshop-hero-actions">
+        <a class="primary-action" href="#/folderimport?job_id=${encodeURIComponent(jobItem.id)}">Select Customer Folder</a>
+        ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open Cut-Sheet PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
+        <a class="ghost-button" href="#/dymolabels?job_id=${encodeURIComponent(jobItem.id)}">Print Dymo Labels</a>
+        <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(jobItem.id)}&revision_id=${encodeURIComponent(revision.id)}">Add Remake</a>
+        <a class="ghost-button" href="#/cutting/${encodeURIComponent(revision.id)}">Cutting Mode</a>
+      </div>
+    </section>
+  `;
+}
+
+function renderWorkshopMeta(label, value) {
+  return `<div class="workshop-meta-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function renderWorkshopFileHealthCard(selected, patternItems) {
+  const pdf = jobFileById(selected.revision.pdf_file_id);
+  const ncCount = patternItems.filter((item) => item.revision.nc_file_id).length;
+  const pdfLinked = patternItems.filter((item) => item.revision.pdf_file_id).length;
+  const reviewCount = patternItems.filter((item) => item.revision.review_required).length;
+  const missingCount = patternItems.filter((item) => !(item.revision.pdf_file_id && item.revision.nc_file_id)).length;
+  return `
+    <section class="panel workshop-file-health">
+      <div class="section-heading">
+        <h2>File Health / Import</h2>
+        <span class="status-pill ${missingCount || reviewCount ? "warning" : "good"}">${missingCount || reviewCount ? "Check files" : "Good"}</span>
+      </div>
+      <div class="file-health-grid">
+        <article class="file-health-tile">
+          <span class="file-health-icon pdf">PDF</span>
+          <strong>Cut-sheet PDF</strong>
+          <span>${escapeHtml(pdf?.original_filename || "Missing")}</span>
+          <em>${pdfLinked} of ${patternItems.length} pattern(s) linked</em>
+        </article>
+        <article class="file-health-tile">
+          <span class="file-health-icon nc">CNC</span>
+          <strong>NC Files</strong>
+          <span>${ncCount} NC file(s)</span>
+          <em>${ncCount === patternItems.length ? "All patterns have NC files" : `${patternItems.length - ncCount} missing`}</em>
+        </article>
+        <article class="file-health-summary">
+          ${metricRow("PDF status", pdfLinked ? "Found" : "Missing")}
+          ${metricRow("NC files status", ncCount === patternItems.length ? "Good" : "Missing")}
+          ${metricRow("Patterns linked", `${Math.min(pdfLinked, ncCount)} of ${patternItems.length}`)}
+          ${metricRow("Review required", reviewCount ? String(reviewCount) : "No")}
+        </article>
+      </div>
+      <div class="item-controls wrap-controls">
+        <a class="primary-action" href="#/folderimport?job_id=${encodeURIComponent(selected.jobItem.id)}">Rescan Folder</a>
+        ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open PDF</a>` : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderWorkshopCutPatternsTable(selected, patternItems) {
+  return `
+    <section class="panel workshop-pattern-panel">
+      <div class="section-heading">
+        <h2>Cut Patterns</h2>
+        <span class="count-pill">${patternItems.length}</span>
+      </div>
+      <div class="workshop-pattern-table">
+        <div class="workshop-pattern-head">
+          <span>Material</span><span>Pattern</span><span>Rev</span><span>PDF</span><span>NC</span><span>Runs</span><span>Remaining</span><span>Actions</span>
+        </div>
+        ${patternItems.map((item) => renderWorkshopPatternRow(item, selected.revision.id)).join("") || empty("No cut patterns for this job.")}
+      </div>
+      <div class="workshop-table-legend"><span>&check; Good</span><span>! Warning</span><span>! Problem</span></div>
+    </section>
+  `;
+}
+
+function renderWorkshopPatternRow({ pattern, revision }, selectedRevisionId) {
+  const pdf = jobFileById(revision.pdf_file_id);
+  const nc = jobFileById(revision.nc_file_id);
+  const remaining = Math.max(0, Number(revision.required_run_quantity || 0) - Number(revision.completed_run_quantity || 0));
+  const problem = revision.review_required || !(pdf && nc);
+  return `
+    <article class="workshop-pattern-row ${problem ? "problem" : ""} ${revision.id === selectedRevisionId ? "active" : ""}">
+      <span>${escapeHtml(pattern.material_description || pattern.material_code || "Material")}</span>
+      <span>${escapeHtml(pattern.pattern_number)}</span>
+      <span>${escapeHtml(revision.filename_revision)}</span>
+      <span>${pdf ? "&check;" : "!"}</span>
+      <span>${nc ? "&check;" : "!"}</span>
+      <span>${escapeHtml(`${revision.completed_run_quantity}/${revision.required_run_quantity}`)}</span>
+      <span>${remaining ? `<strong>${remaining}</strong>` : "Complete"}</span>
+      <span class="item-controls wrap-controls">
+        <a class="ghost-button" href="#/cutting/${encodeURIComponent(revision.id)}">Cut</a>
+        <button class="ghost-button mark-one-run" data-revision-id="${escapeAttr(revision.id)}" type="button" ${remaining ? "" : "disabled"}>+1</button>
+      </span>
+    </article>
+  `;
+}
+
+function renderWorkshopRemakesCard(selected, remakes) {
+  return `
+    <section class="panel workshop-side-card">
+      <div class="section-heading">
+        <h2>Remakes</h2>
+        <span class="count-pill">${remakes.length}</span>
+      </div>
+      <div class="list">${remakes.length ? remakes.slice(0, 5).map(renderRemakeQueueRow).join("") : empty("No open remakes for this job.")}</div>
+      <a class="plain-button" href="#/remakeform?job_id=${encodeURIComponent(selected.jobItem.id)}">Add Remake +</a>
+    </section>
+  `;
+}
+
+function renderWorkshopDymoCard(selected) {
+  return `
+    <section class="panel workshop-side-card dymo-mini-card">
+      <div class="section-heading">
+        <h2>Dymo Labels</h2>
+        <span class="count-pill">11352</span>
+      </div>
+      <div class="dymo-mini-preview">
+        <strong>C5 UEL</strong>
+        <span>720 x 550</span>
+        <em>&larr; &uarr; &rarr;</em>
+      </div>
+      <p class="muted">Print part labels with dimensions and edge-banding arrows.</p>
+      <a class="primary-action" href="#/dymolabels?job_id=${encodeURIComponent(selected.jobItem.id)}">Print Labels</a>
+    </section>
+  `;
+}
+
+function renderWorkshopActivityCard(activity) {
+  return `
+    <section class="panel workshop-side-card">
+      <div class="section-heading">
+        <h2>Activity</h2>
+        <span class="count-pill">${activity.length}</span>
+      </div>
+      <div class="list">
+        ${activity.length ? activity.map((item) => `
+          <div class="list-link compact-link">
+            <span><strong>${escapeHtml(item.action)}</strong><br><span class="muted">${escapeHtml(formatDateTime(item.happened_at))}</span></span>
+          </div>
+        `).join("") : empty("No recent workshop activity for this job.")}
+      </div>
+    </section>
+  `;
+}
 function renderWorkshopStat(label, value) {
   return `<section class="panel dashboard-card compact-stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></section>`;
 }
