@@ -2479,30 +2479,44 @@ function metricRow(label, value) {
 
 function renderSuppliers() {
   setTitle("Run List");
-  const rows = state.suppliers
+  const suppliers = state.suppliers
     .filter((supplierItem) => supplierItem.active)
-    .sort((a, b) => a.supplier_name.localeCompare(b.supplier_name))
-    .map((supplierItem) => {
-      const count = activeItems().filter((item) => item.supplier_id === supplierItem.id).length;
-      return `
-        <a class="list-link" href="#/suppliers/${supplierItem.id}">
-          <span>
-            <strong>${escapeHtml(supplierItem.supplier_name)}</strong><br>
-            <span class="muted">${escapeHtml([supplierItem.supplier_type, supplierItem.town].filter(Boolean).join(" - ") || "Supplier")}</span>
-          </span>
-          <span class="count-pill">${count}</span>
-        </a>
-      `;
-    })
-    .join("");
+    .sort((a, b) => a.supplier_name.localeCompare(b.supplier_name));
+  const toGet = activeItems().length;
+  const rows = suppliers.map((supplierItem) => {
+    const items = activeItems().filter((item) => item.supplier_id === supplierItem.id);
+    return `
+      <a class="list-link mobile-list-card store-card" href="#/suppliers/${supplierItem.id}">
+        <span>
+          <strong>${escapeHtml(supplierItem.supplier_name)}</strong><br>
+          <span class="muted">${escapeHtml([supplierItem.supplier_type, supplierItem.town, items.length ? `${items.length} items` : "No items"].filter(Boolean).join(" - "))}</span>
+        </span>
+        <span class="mobile-card-end"><span class="count-pill">${items.length}</span><span aria-hidden="true">&rsaquo;</span></span>
+      </a>
+    `;
+  }).join("");
 
   app.innerHTML = `
-    <div class="stack">
-      <div class="toolbar">
-        <a class="primary-action" href="#/add">Add item</a>
-        <a class="ghost-button" href="#/settings">Suppliers</a>
+    <div class="stack mobile-page mobile-run-list-page">
+      <section class="mobile-page-intro">
+        <div class="mobile-title-row">
+          <div><p class="mobile-eyebrow">RUN LIST</p><h2>Shopping lists</h2></div>
+          <a class="primary-action" href="#/add">+ Add item</a>
+        </div>
+        <p class="muted">Keep each supplier list together so you can collect everything in one trip.</p>
+        <div class="mobile-stat-grid">
+          <div><strong>${toGet}</strong><span>Items to get</span></div>
+          <div><strong>${suppliers.length}</strong><span>Suppliers</span></div>
+        </div>
+      </section>
+      <div class="mobile-segmented" aria-label="Run list view">
+        <a class="active" href="#/suppliers">By store</a>
+        <a href="#/jobs">By job</a>
       </div>
-      <section class="list">${rows || empty("No active suppliers yet.")}</section>
+      <section class="mobile-list-section">
+        <div class="section-heading"><h2>Store lists</h2><a class="ghost-button" href="#/settings">Manage</a></div>
+        <div class="list">${rows || empty("No active suppliers yet.")}</div>
+      </section>
     </div>
   `;
 }
@@ -2540,24 +2554,33 @@ function renderLeads() {
   const leads = (showClosed ? closedLeads() : activeLeads())
     .filter((leadItem) => !statusFilter || leadItem.status === statusFilter)
     .sort((a, b) => leadSortValue(a).localeCompare(leadSortValue(b)));
+  const stageTabs = LEAD_PIPELINE_STAGES.map((stage) => {
+    const count = activeLeads().filter((leadItem) => leadItem.status === stage).length;
+    return `<a class="${statusFilter === stage ? "active" : ""}" href="#/leads?status=${encodeURIComponent(stage)}"><span>${escapeHtml(readable(stage))}</span><b>${count}</b></a>`;
+  }).join("");
   const rows = leads.map((leadItem) => `
-    <a class="list-link" href="#/leads/${leadItem.id}">
+    <a class="list-link mobile-list-card lead-card" href="#/leads/${leadItem.id}">
       <span>
         <strong>${escapeHtml(labelForLead(leadItem))}</strong><br>
-        <span class="muted">${escapeHtml([readable(leadItem.status), leadItem.location, leadItem.next_follow_up ? `Follow up ${formatDate(leadItem.next_follow_up)}` : ""].filter(Boolean).join(" - "))}</span>
+        <span class="muted">${escapeHtml([leadItem.lead_name, leadItem.location, leadItem.next_follow_up ? `Follow up ${formatDate(leadItem.next_follow_up)}` : ""].filter(Boolean).join(" - "))}</span>
       </span>
-      <span class="priority-pill ${escapeAttr(leadItem.priority)}">${escapeHtml(readable(leadItem.priority))}</span>
+      <span class="mobile-card-end"><span class="status-pill ${leadItem.priority === "urgent" ? "urgent" : ""}">${escapeHtml(readable(leadItem.status))}</span><span aria-hidden="true">&rsaquo;</span></span>
     </a>
   `).join("");
 
   app.innerHTML = `
-    <div class="stack">
-      <div class="toolbar">
-        <a class="primary-action" href="#/leadform">Add lead</a>
-        ${statusFilter ? '<a class="ghost-button" href="#/leads">Clear filter</a>' : ""}
-        <a class="ghost-button" href="${showClosed ? "#/leads" : "#/leads?show=closed"}">${showClosed ? "Show active" : "Show closed"}</a>
-      </div>
-      <section class="list">${rows || empty(statusFilter ? `No active leads in ${readable(statusFilter)}.` : showClosed ? "No closed leads yet." : "No active leads yet.")}</section>
+    <div class="stack mobile-page mobile-leads-page">
+      <section class="mobile-page-intro">
+        <div class="mobile-title-row"><div><p class="mobile-eyebrow">CLIENT PIPELINE</p><h2>Leads</h2></div><a class="primary-action" href="#/leadform">+ New lead</a></div>
+        <p class="muted">Quick access to every enquiry, next action, and measure-up.</p>
+      </section>
+      ${showClosed ? '<a class="ghost-button full-width" href="#/leads">Show active leads</a>' : `<div class="mobile-stage-tabs">${stageTabs}</div>`}
+      ${statusFilter ? '<a class="plain-button mobile-clear-filter" href="#/leads">Clear stage filter</a>' : ""}
+      <section class="mobile-list-section">
+        <div class="section-heading"><h2>${escapeHtml(statusFilter ? readable(statusFilter) : "Active leads")}</h2><span class="count-pill">${leads.length}</span></div>
+        <div class="list">${rows || empty(statusFilter ? `No active leads in ${readable(statusFilter)}.` : showClosed ? "No closed leads yet." : "No active leads yet.")}</div>
+      </section>
+      ${showClosed ? "" : '<a class="ghost-button full-width" href="#/leads?show=closed">View closed leads</a>'}
     </div>
   `;
 }
@@ -2757,38 +2780,42 @@ function renderJobs() {
   const statusFilter = params.status || "";
   setTitle(statusFilter ? readable(statusFilter) : showClosed ? "Closed Jobs" : "Jobs");
   const jobs = (showClosed ? closedJobs() : openJobs()).filter((jobItem) => !statusFilter || jobItem.status === statusFilter);
+  const stageTabs = JOB_PIPELINE_STAGES.map((stage) => {
+    const count = openJobs().filter((jobItem) => jobItem.status === stage).length;
+    return `<a class="${statusFilter === stage ? "active" : ""}" href="#/jobs?status=${encodeURIComponent(stage)}"><span>${escapeHtml(readable(stage))}</span><b>${count}</b></a>`;
+  }).join("");
   const rows = jobs
     .sort((a, b) => jobStageSort(a.status) - jobStageSort(b.status) || labelForJob(a).localeCompare(labelForJob(b)))
     .map((jobItem) => {
       const count = activeItems().filter((item) => item.job_id === jobItem.id).length;
       const packing = latestChecklistForType(jobItem.id, "packing");
       const qc = latestChecklistForType(jobItem.id, "qc_completion");
-      const checklistMeta = [
-        packing ? `Packing ${checklistProgress(packing.id).percent}%` : "Packing not started",
-        qc ? `QC ${checklistProgress(qc.id).percent}%` : "QC not started",
-      ].join(" - ");
+      const checklistMeta = [packing ? `Packing ${checklistProgress(packing.id).percent}%` : "Packing not started", qc ? `QC ${checklistProgress(qc.id).percent}%` : "QC not started"].join(" - ");
       return `
-        <a class="list-link" href="#/jobs/${jobItem.id}">
+        <a class="list-link mobile-list-card job-card" href="#/jobs/${jobItem.id}">
           <span>
             <strong>${escapeHtml(labelForJob(jobItem))}</strong><br>
-            <span class="muted">${escapeHtml([readable(jobItem.status), jobItem.job_number, jobItem.location, checklistMeta].filter(Boolean).join(" - ") || "Job")}</span>
+            <span class="muted">${escapeHtml([jobItem.job_number, jobItem.location, checklistMeta].filter(Boolean).join(" - ") || "Job")}</span>
           </span>
-          <span class="count-pill">${count}</span>
+          <span class="mobile-card-end"><span class="status-pill ${jobItem.priority === "urgent" ? "urgent" : ""}">${escapeHtml(readable(jobItem.status))}</span><span class="count-pill">${count}</span><span aria-hidden="true">&rsaquo;</span></span>
         </a>
       `;
-    })
-    .join("");
+    }).join("");
 
   app.innerHTML = `
-    <div class="stack">
-      <div class="toolbar">
-        <a class="primary-action" href="#/jobform">New job</a>
-        <a class="primary-action" href="#/add">Add item</a>
-        <a class="ghost-button" href="#/stages">Stages</a>
-        ${statusFilter ? '<a class="ghost-button" href="#/jobs">Clear filter</a>' : ""}
-        <a class="ghost-button" href="${showClosed ? "#/jobs" : "#/jobs?show=closed"}">${showClosed ? "Show open" : "Show complete/cancelled"}</a>
-      </div>
-      <section class="list">${rows || empty(statusFilter ? `No open jobs in ${readable(statusFilter)}.` : showClosed ? "No completed or cancelled jobs yet." : "No open jobs yet.")}</section>
+    <div class="stack mobile-page mobile-jobs-page">
+      <section class="mobile-page-intro">
+        <div class="mobile-title-row"><div><p class="mobile-eyebrow">JOB TRACKER</p><h2>Jobs</h2></div><a class="primary-action" href="#/jobform">+ New job</a></div>
+        <div class="mobile-stat-grid"><div><strong>${openJobs().length}</strong><span>Open jobs</span></div><div><strong>${activeItems().filter((item) => item.job_id).length}</strong><span>Run-list items</span></div></div>
+      </section>
+      ${showClosed ? '<a class="ghost-button full-width" href="#/jobs">Show open jobs</a>' : `<div class="mobile-stage-tabs">${stageTabs}</div>`}
+      ${statusFilter ? '<a class="plain-button mobile-clear-filter" href="#/jobs">Clear stage filter</a>' : ""}
+      <section class="mobile-list-section">
+        <div class="section-heading"><h2>${escapeHtml(statusFilter ? readable(statusFilter) : "Open jobs")}</h2><span class="count-pill">${jobs.length}</span></div>
+        <div class="list">${rows || empty(statusFilter ? `No open jobs in ${readable(statusFilter)}.` : showClosed ? "No completed or cancelled jobs yet." : "No open jobs yet.")}</div>
+      </section>
+      <div class="mobile-quick-actions"><a class="ghost-button" href="#/add">Add run-list item</a><a class="ghost-button" href="#/stages">View all stages</a></div>
+      ${showClosed ? "" : '<a class="ghost-button full-width" href="#/jobs?show=closed">View completed / cancelled</a>'}
     </div>
   `;
 }
@@ -5035,15 +5062,18 @@ function renderOrders() {
     "Pickup needed": activeItems().filter((item) => item.type === "pickup" && item.status === "needed"),
     "Needed before install": activeItems().filter((item) => item.needed_by),
   };
+  const toOrder = groups["Still to order"].length;
+  const pickup = groups["Ready to collect"].length + groups["Pickup needed"].length;
 
   app.innerHTML = `
-    <div class="stack">
+    <div class="stack mobile-page mobile-orders-page">
+      <section class="mobile-page-intro">
+        <div class="mobile-title-row"><div><p class="mobile-eyebrow">PROCUREMENT</p><h2>Orders</h2></div><a class="primary-action" href="#/add">+ Add item</a></div>
+        <div class="mobile-stat-grid"><div><strong>${toOrder}</strong><span>Still to order</span></div><div><strong>${pickup}</strong><span>To collect</span></div></div>
+      </section>
       ${Object.entries(groups).map(([heading, items]) => `
-        <section>
-          <div class="section-heading">
-            <h2>${escapeHtml(heading)}</h2>
-            <span class="count-pill">${items.length}</span>
-          </div>
+        <section class="mobile-list-section mobile-order-group">
+          <div class="section-heading"><h2>${escapeHtml(heading)}</h2><span class="count-pill">${items.length}</span></div>
           <div class="list">${items.length ? renderItemList(items.sort(sortByNeededDate)) : empty("Nothing here.")}</div>
         </section>
       `).join("")}

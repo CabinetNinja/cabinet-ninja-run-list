@@ -1642,3 +1642,256 @@ a.plain-button {
     page-break-after: always;
   }
 }
+
+/* Phone-first operational pages: keeps workshop/CNC desktop-only while the day-to-day app is quick to use on site. */
+.nav-icon {
+  display: inline-grid;
+  place-items: center;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.mobile-page {
+  gap: 16px;
+}
+
+.mobile-page-intro {
+  display: grid;
+  gap: 10px;
+}
+
+.mobile-title-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mobile-title-row h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.mobile-eyebrow {
+  margin: 0 0 3px;
+  color: var(--green-2);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .06em;
+}
+
+.mobile-page-intro > .muted {
+  margin: 0;
+}
+
+.mobile-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mobile-stat-grid > div {
+  display: grid;
+  gap: 3px;
+  min-height: 72px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.mobile-stat-grid strong {
+  color: var(--green);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.mobile-stat-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mobile-segmented,
+.mobile-stage-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.mobile-segmented::-webkit-scrollbar,
+.mobile-stage-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-segmented a,
+.mobile-stage-tabs a {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 7px;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 11px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.mobile-segmented a.active,
+.mobile-stage-tabs a.active {
+  color: var(--green);
+  background: #e4f3f0;
+  border-color: var(--teal);
+}
+
+.mobile-stage-tabs b {
+  display: inline-grid;
+  place-items: center;
+  min-width: 19px;
+  min-height: 19px;
+  padding: 1px 5px;
+  color: var(--green);
+  background: #d9eeea;
+  border-radius: 99px;
+  font-size: 11px;
+}
+
+.mobile-list-section {
+  display: grid;
+  gap: 8px;
+}
+
+.mobile-list-section .section-heading {
+  margin: 0;
+}
+
+.mobile-list-section .section-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.mobile-list-card {
+  min-height: 76px;
+  padding: 13px;
+  border-radius: 10px;
+}
+
+.mobile-card-end {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 46%;
+  text-align: right;
+}
+
+.mobile-card-end > [aria-hidden="true"] {
+  color: var(--muted);
+  font-size: 24px;
+  line-height: .7;
+}
+
+.mobile-card-end .status-pill {
+  max-width: 138px;
+  text-align: center;
+}
+
+.mobile-clear-filter {
+  justify-self: start;
+  min-height: 36px;
+  font-size: 12px;
+}
+
+.mobile-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-quick-actions .ghost-button {
+  min-height: 46px;
+  text-align: center;
+}
+
+.mobile-order-group .item-row {
+  border-radius: 10px;
+}
+
+@media (max-width: 719px) {
+  .app-shell {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+
+  .topbar {
+    grid-template-columns: 42px 1fr auto;
+    min-height: 66px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .topbar .brand {
+    color: var(--green);
+    font-size: 11px;
+  }
+
+  .topbar h1 {
+    font-size: 20px;
+  }
+
+  .topbar .primary-action {
+    min-height: 40px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+
+  main {
+    padding: 16px 14px 24px;
+  }
+
+  .bottom-nav {
+    grid-template-columns: repeat(5, 1fr);
+    min-height: 70px;
+    padding: 4px 4px env(safe-area-inset-bottom);
+    box-shadow: 0 -8px 24px rgba(23, 33, 31, .06);
+  }
+
+  .bottom-nav .desktop-nav-only {
+    display: none;
+  }
+
+  .bottom-nav a {
+    display: grid;
+    gap: 3px;
+    align-content: center;
+    min-height: 64px;
+    padding: 4px 2px;
+    font-size: 10px;
+  }
+
+  .bottom-nav a.active {
+    background: transparent;
+  }
+
+  .bottom-nav a.active .nav-icon {
+    color: var(--teal);
+  }
+
+  .bottom-nav a.active span:last-child {
+    color: var(--green);
+  }
+
+  .mobile-page .primary-action {
+    min-height: 42px;
+    padding: 0 11px;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+}
