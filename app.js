@@ -1893,6 +1893,7 @@ function render() {
     jobform: () => renderJobForm(route.params),
     job: () => renderJobDetail(route.id),
     workshop: renderWorkshopDashboard,
+    cutting: () => renderCuttingModeScreen(route.id),
     cutimport: () => renderCutImportForm(route.params),
     folderimport: () => renderMaterialFolderImportForm(route.params),
     dymolabels: () => renderDymoLabelPrintForm(route.params),
@@ -1989,6 +1990,7 @@ function getRoute() {
   if (parts[0] === "leads" && parts[1]) return { name: "lead", section: "leads", id: parts[1], params };
   if (parts[0] === "leadform" && parts[1]) return { name: "leadform", section: "leads", id: parts[1], params };
   if (parts[0] === "remakeform" && parts[1]) return { name: "remakeform", section: "workshop", id: parts[1], params };
+  if (parts[0] === "cutting" && parts[1]) return { name: "cutting", section: "workshop", id: parts[1], params };
   if (parts[0] === "suppliers" && parts[1]) return { name: "supplier", section: "suppliers", id: parts[1], params };
   if (parts[0] === "jobs" && parts[1]) return { name: "job", section: "jobs", id: parts[1], params };
   if (parts[0] === "edit" && parts[1]) return { name: "edit", id: parts[1], params };
@@ -3093,6 +3095,7 @@ function renderCutPatternSummary(pattern) {
         ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
         ${pdf ? renderPdfUsageNote(pdf) : ""}
         ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC</a>` : '<span class="status-pill warning">NC missing</span>'}
+        <a class="primary-action" href="#/cutting/${encodeURIComponent(current.id)}">Cutting Mode</a>
         ${pdf ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(pdf.id)}" type="button">Remove PDF</button>` : ""}
         ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC</button>` : ""}
         <button class="primary-action mark-one-run" data-revision-id="${escapeAttr(current.id)}" type="button">Mark One Run Cut</button>
@@ -3161,6 +3164,18 @@ function bindJobWorkshopArea(jobId) {
   bindWorkshopButtons();
 }
 
+function renderWorkshopMobileBlocker() {
+  return `
+    <section class="panel workshop-mobile-only mobile-workshop-blocker">
+      <h2>Workshop screen needs a bigger display</h2>
+      <p class="muted">Use the workshop PC, CNC PC, laptop, or tablet for Workshop and Cutting Mode. The normal Run List, Orders, Leads, Jobs, and supplier screens still work on your phone.</p>
+      <div class="form-actions">
+        <a class="primary-action" href="#/">Open Run List</a>
+        <a class="ghost-button" href="#/orders">Open Orders</a>
+      </div>
+    </section>
+  `;
+}
 function renderWorkshopDashboard() {
   setTitle("Workshop");
   const queue = currentWorkshopQueue();
@@ -3168,7 +3183,8 @@ function renderWorkshopDashboard() {
   const attention = dashboardWorkshopWarnings();
   const remaining = queue.reduce((total, item) => total + Math.max(0, item.revision.required_run_quantity - item.revision.completed_run_quantity), 0);
   app.innerHTML = `
-    <div class="stack workshop-dashboard">
+    ${renderWorkshopMobileBlocker()}
+    <div class="stack workshop-dashboard workshop-desktop-only">
       <section class="dashboard-hero">
         <div>
           <p class="dashboard-date">${escapeHtml(fullDateLabel())}</p>
@@ -3259,6 +3275,7 @@ function renderWorkshopQueueCard({ pattern, revision, jobItem }) {
         ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
         ${pdf ? renderPdfUsageNote(pdf) : ""}
         ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC</a>` : '<span class="status-pill warning">NC missing</span>'}
+        <a class="primary-action" href="#/cutting/${encodeURIComponent(revision.id)}">Cutting Mode</a>
         ${pdf ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(pdf.id)}" type="button">Remove PDF</button>` : ""}
         ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC</button>` : ""}
         <button class="primary-action mark-one-run" data-revision-id="${escapeAttr(revision.id)}" type="button">Mark One Run Cut</button>
@@ -3312,6 +3329,167 @@ function bindWorkshopButtons() {
   });
 }
 
+function renderCuttingModeScreen(revisionId) {
+  const revision = cutRevisionById(revisionId);
+  if (!revision) {
+    renderNotFound("Cutting revision not found.");
+    return;
+  }
+  const pattern = cutPatternById(revision.cut_pattern_id);
+  const jobItem = jobById(revision.job_id);
+  if (!pattern || !jobItem) {
+    renderNotFound("Cutting job or pattern not found.");
+    return;
+  }
+  setTitle("Cutting Mode");
+  const pdf = jobFileById(revision.pdf_file_id);
+  const nc = jobFileById(revision.nc_file_id);
+  const pct = revision.required_run_quantity ? Math.min(100, Math.round((revision.completed_run_quantity / revision.required_run_quantity) * 100)) : 0;
+  const remaining = Math.max(0, Number(revision.required_run_quantity || 0) - Number(revision.completed_run_quantity || 0));
+  const blockers = [
+    revision.is_superseded ? "This revision is superseded - Do Not Cut" : "",
+    revision.review_required ? revision.review_reason || "Review required before cutting" : "",
+    !pdf ? "Cut-sheet PDF missing" : "",
+    !nc ? "NC file missing" : "",
+  ].filter(Boolean);
+  const jobRemakes = remakesForJob(jobItem.id).filter((item) => !["returned_to_job", "cancelled"].includes(item.status));
+  const otherPatterns = cutPatternsForJob(jobItem.id)
+    .map((candidate) => ({ pattern: candidate, revision: currentCutRevisionForPattern(candidate.id) }));
+
+  app.innerHTML = `
+    ${renderWorkshopMobileBlocker()}
+    <div class="cutting-mode workshop-desktop-only">
+      <section class="panel cutting-hero ${blockers.length ? "danger-state" : ""}">
+        <div>
+          <p class="muted">Cutting Mode</p>
+          <h2>${escapeHtml(labelForJob(jobItem))}</h2>
+          <p class="muted">${escapeHtml([jobItem.location, jobItem.target_install_date ? `Install ${formatDate(jobItem.target_install_date)}` : "", pattern.material_description || pattern.material_code].filter(Boolean).join(" - "))}</p>
+        </div>
+        <div class="cutting-hero-status">
+          <span class="status-pill ${blockers.length ? "urgent" : ""}">${escapeHtml(blockers.length ? "Needs attention" : readable(revision.production_status))}</span>
+          <strong>${escapeHtml(pattern.pattern_number)} ${escapeHtml(revision.filename_revision)}</strong>
+        </div>
+      </section>
+
+      ${blockers.length ? `<section class="warning-panel cutting-alert"><strong>Check before cutting:</strong><ul>${blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>` : ""}
+
+      <section class="cutting-layout">
+        <div class="cutting-main stack">
+          <section class="panel cutting-action-panel">
+            <div class="section-heading">
+              <h2>Files and labels</h2>
+              <span class="count-pill">Only what you need</span>
+            </div>
+            <div class="cutting-big-actions">
+              ${pdf?.file_url ? `<a class="primary-action cutting-big-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></a>` : `<span class="cutting-big-button disabled-action">PDF Missing<span>Rescan customer folder</span></span>`}
+              ${nc?.file_url ? `<a class="primary-action cutting-big-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC File<span>${escapeHtml(nc.original_filename)}</span></a>` : `<span class="cutting-big-button disabled-action">NC Missing<span>Rescan customer folder</span></span>`}
+              <a class="ghost-button cutting-big-button" href="#/dymolabels?job_id=${encodeURIComponent(jobItem.id)}">Print Dymo Labels<span>Part labels + edge arrows</span></a>
+              <a class="ghost-button cutting-big-button" href="#/folderimport?job_id=${encodeURIComponent(jobItem.id)}">Rescan Customer Folder<span>Pick up remakes / changed files</span></a>
+            </div>
+          </section>
+
+          <section class="panel cutting-progress-panel">
+            <div class="section-heading">
+              <h2>Cut progress</h2>
+              <span class="count-pill">${escapeHtml(`${revision.completed_run_quantity}/${revision.required_run_quantity}`)}</span>
+            </div>
+            <div class="cutting-progress-number">${escapeHtml(String(remaining))}<span>run(s) remaining</span></div>
+            <div class="progress-bar large-progress"><span style="width:${pct}%"></span></div>
+            <div class="cutting-controls">
+              <button class="primary-action start-cutting-mode" data-revision-id="${escapeAttr(revision.id)}" type="button" ${blockers.length || !remaining ? "disabled" : ""}>Set Cutting</button>
+              <button class="primary-action mark-one-run" data-revision-id="${escapeAttr(revision.id)}" type="button" ${remaining ? "" : "disabled"}>Mark One Run Cut</button>
+              <button class="ghost-button mark-many-runs" data-revision-id="${escapeAttr(revision.id)}" type="button" ${remaining ? "" : "disabled"}>Mark Multiple</button>
+              <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(jobItem.id)}&revision_id=${encodeURIComponent(revision.id)}">Add Remake</a>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading">
+              <h2>Other patterns for this job</h2>
+              <span class="count-pill">${otherPatterns.length}</span>
+            </div>
+            <div class="cutting-pattern-list">
+              ${otherPatterns.map((item) => renderCuttingPatternJump(item.pattern, item.revision, revision.id)).join("") || empty("No other patterns.")}
+            </div>
+          </section>
+        </div>
+
+        <aside class="cutting-side stack">
+          <section class="panel">
+            <h2>Current pattern</h2>
+            <div class="list">
+              ${metricRow("Material", pattern.material_description || pattern.material_code || "Not set")}
+              ${metricRow("Pattern", pattern.pattern_number || "Not set")}
+              ${metricRow("Revision", revision.filename_revision || "Not set")}
+              ${metricRow("PDF", pdf ? "Ready" : "Missing")}
+              ${metricRow("NC", nc ? "Ready" : "Missing")}
+              ${metricRow("Review", revision.review_required ? "Required" : "No")}
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading">
+              <h2>Open remakes</h2>
+              <span class="count-pill">${jobRemakes.length}</span>
+            </div>
+            <div class="list">${jobRemakes.length ? jobRemakes.slice(0, 6).map(renderRemakeQueueRow).join("") : empty("No open remakes for this job.")}</div>
+          </section>
+
+          <section class="panel">
+            <h2>Back</h2>
+            <div class="cutting-controls">
+              <a class="ghost-button" href="#/jobs/${encodeURIComponent(jobItem.id)}">Open Job</a>
+              <a class="ghost-button" href="#/workshop">Workshop Dashboard</a>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </div>
+  `;
+  bindWorkshopButtons();
+  bindCuttingModeButtons();
+}
+
+function renderCuttingPatternJump(pattern, revision, currentRevisionId) {
+  if (!revision) return "";
+  const active = revision.id === currentRevisionId;
+  const remaining = Math.max(0, Number(revision.required_run_quantity || 0) - Number(revision.completed_run_quantity || 0));
+  return `
+    <a class="list-link cutting-pattern-jump ${active ? "active" : ""}" href="#/cutting/${encodeURIComponent(revision.id)}">
+      <span>
+        <strong>${escapeHtml(pattern.pattern_number)} - ${escapeHtml(pattern.material_description || pattern.material_code)}</strong><br>
+        <span class="muted">${escapeHtml([revision.filename_revision, readable(revision.production_status), `${remaining} remaining`].filter(Boolean).join(" - "))}</span>
+      </span>
+      <span class="status-pill">${active ? "Current" : escapeHtml(readable(revision.production_status))}</span>
+    </a>
+  `;
+}
+
+function bindCuttingModeButtons() {
+  document.querySelectorAll(".start-cutting-mode").forEach((button) => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => setRevisionCutting(button.dataset.revisionId));
+  });
+}
+
+function setRevisionCutting(revisionId) {
+  const revision = cutRevisionById(revisionId);
+  if (!revision) return;
+  if (revision.is_superseded || !revision.is_current) return toast("Superseded - Do Not Cut. Use the current revision.");
+  if (!(revision.pdf_file_id && revision.nc_file_id)) return toast("PDF and NC file are required before cutting.");
+  if (Number(revision.completed_run_quantity || 0) >= Number(revision.required_run_quantity || 0)) return toast("This pattern is already cut complete.");
+  revision.production_status = "cutting";
+  revision.updated_at = nowIso();
+  const pattern = cutPatternById(revision.cut_pattern_id);
+  if (pattern) {
+    pattern.status = "cutting";
+    pattern.updated_at = nowIso();
+  }
+  logActivity(revision.job_id, "cut_pattern_revision", revision.id, "Cutting started", "", "cutting");
+  saveState();
+  render();
+}
 function renderCutImportForm(params = {}) {
   const selectedJobId = params.job_id || "";
   setTitle("Import Cut Files");
