@@ -2069,6 +2069,13 @@ function renderPdfUsageNote(file) {
   return `<span class="status-pill">Shared PDF - likely all cut sheets (${usage.patternCount} patterns)</span>`;
 }
 
+function renderNcReferenceBadge(file) {
+  if (!file) return '<span class="status-pill warning">NC filename missing</span>';
+  const parsed = parseMozaikFilename(file.original_filename);
+  const revision = parsed.filename_revision ? ` ${parsed.filename_revision}` : "";
+  return `<span class="status-pill good" title="Filename/version reference only">NC filename checked${escapeHtml(revision)}</span>`;
+}
+
 function cutPatternById(id) {
   return state.cut_patterns.find((item) => item.id === id);
 }
@@ -2305,8 +2312,8 @@ function dashboardWorkshopWarnings() {
   currentWorkshopQueue().forEach(({ pattern, revision, jobItem }) => {
     const href = `#/jobs/${jobItem.id}`;
     const label = `${labelForJob(jobItem)} ${pattern.pattern_number} ${revision.filename_revision}`;
-    if (revision.pdf_file_id && !revision.nc_file_id) rows.push(dashboardItem("CNC", label, "PDF uploaded but NC file is missing", jobItem.target_install_date, href, "warning", "NC"));
-    if (revision.nc_file_id && !revision.pdf_file_id) rows.push(dashboardItem("CNC", label, "NC file uploaded but PDF is missing", jobItem.target_install_date, href, "warning", "PDF"));
+    if (revision.pdf_file_id && !revision.nc_file_id) rows.push(dashboardItem("CNC", label, "PDF saved but NC filename check is missing", jobItem.target_install_date, href, "warning", "NC"));
+    if (revision.nc_file_id && !revision.pdf_file_id) rows.push(dashboardItem("CNC", label, "NC filename checked but PDF is missing", jobItem.target_install_date, href, "warning", "PDF"));
     if (revision.review_required) rows.push(dashboardItem("CNC", label, revision.review_reason || "Revision needs review", jobItem.target_install_date, href, "urgent", "Review"));
     if (revision.completed_run_quantity < revision.required_run_quantity && ["ready_for_cnc", "partially_cut"].includes(revision.production_status)) {
       rows.push(dashboardItem("CNC", label, `${revision.required_run_quantity - revision.completed_run_quantity} physical run(s) remaining`, jobItem.target_install_date, href, "normal", "Cut"));
@@ -3121,10 +3128,10 @@ function renderCutPatternSummary(pattern) {
       <div class="item-controls wrap-controls">
         ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
         ${pdf ? renderPdfUsageNote(pdf) : ""}
-        ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC</a>` : '<span class="status-pill warning">NC missing</span>'}
+        ${renderNcReferenceBadge(nc)}
         <a class="primary-action" href="#/cutting/${encodeURIComponent(current.id)}">Cutting Mode</a>
         ${pdf ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(pdf.id)}" type="button">Remove PDF</button>` : ""}
-        ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC</button>` : ""}
+        ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC check</button>` : ""}
         <button class="primary-action mark-one-run" data-revision-id="${escapeAttr(current.id)}" type="button">Mark One Run Cut</button>
         <button class="ghost-button mark-many-runs" data-revision-id="${escapeAttr(current.id)}" type="button">Mark Multiple</button>
         <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(pattern.job_id)}&revision_id=${encodeURIComponent(current.id)}">Add Remake</a>
@@ -3159,9 +3166,9 @@ function renderPatternVersionHistory(pattern, revisions) {
               <div class="item-controls wrap-controls">
                 ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View this PDF</a>` : '<span class="status-pill warning">No PDF</span>'}
                 ${pdf ? renderPdfUsageNote(pdf) : ""}
-                ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open this NC</a>` : '<span class="status-pill warning">No NC</span>'}
+                ${renderNcReferenceBadge(nc)}
                 ${pdf ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(pdf.id)}" type="button">Remove PDF</button>` : ""}
-                ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC</button>` : ""}
+                ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC check</button>` : ""}
               </div>
             </article>
           `;
@@ -3416,13 +3423,13 @@ function renderWorkshopFileHealthCard(selected, patternItems) {
         </article>
         <article class="file-health-tile">
           <span class="file-health-icon nc">CNC</span>
-          <strong>NC Files</strong>
-          <span>${ncCount} NC file(s)</span>
-          <em>${ncCount === patternItems.length ? "All patterns have NC files" : `${patternItems.length - ncCount} missing`}</em>
+          <strong>NC Filename Checks</strong>
+          <span>${ncCount} NC filename(s) checked</span>
+          <em>${ncCount === patternItems.length ? "All pattern names checked" : `${patternItems.length - ncCount} missing`}</em>
         </article>
         <article class="file-health-summary">
           ${metricRow("PDF status", pdfLinked ? "Found" : "Missing")}
-          ${metricRow("NC files status", ncCount === patternItems.length ? "Good" : "Missing")}
+          ${metricRow("NC filename status", ncCount === patternItems.length ? "Checked" : "Missing")}
           ${metricRow("Patterns linked", `${Math.min(pdfLinked, ncCount)} of ${patternItems.length}`)}
           ${metricRow("Review required", reviewCount ? String(reviewCount) : "No")}
         </article>
@@ -3444,7 +3451,7 @@ function renderWorkshopCutPatternsTable(selected, patternItems) {
       </div>
       <div class="workshop-pattern-table">
         <div class="workshop-pattern-head">
-          <span>Material</span><span>Pattern</span><span>Rev</span><span>PDF</span><span>NC</span><span>Runs</span><span>Remaining</span><span>Actions</span>
+          <span>Material</span><span>Pattern</span><span>Rev</span><span>PDF</span><span>NC name</span><span>Runs</span><span>Remaining</span><span>Actions</span>
         </div>
         ${patternItems.map((item) => renderWorkshopPatternRow(item, selected.revision.id)).join("") || empty("No cut patterns for this job.")}
       </div>
@@ -3561,10 +3568,10 @@ function renderWorkshopQueueCard({ pattern, revision, jobItem }) {
       <div class="item-controls wrap-controls">
         ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
         ${pdf ? renderPdfUsageNote(pdf) : ""}
-        ${nc?.file_url ? `<a class="ghost-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC</a>` : '<span class="status-pill warning">NC missing</span>'}
+        ${renderNcReferenceBadge(nc)}
         <a class="primary-action" href="#/cutting/${encodeURIComponent(revision.id)}">Cutting Mode</a>
         ${pdf ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(pdf.id)}" type="button">Remove PDF</button>` : ""}
-        ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC</button>` : ""}
+        ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC check</button>` : ""}
         <button class="primary-action mark-one-run" data-revision-id="${escapeAttr(revision.id)}" type="button">Mark One Run Cut</button>
         <button class="ghost-button mark-many-runs" data-revision-id="${escapeAttr(revision.id)}" type="button">Mark Multiple</button>
         <a class="ghost-button" href="#/jobs/${encodeURIComponent(jobItem.id)}">Open Job</a>
@@ -3637,7 +3644,7 @@ function renderCuttingModeScreen(revisionId) {
     revision.is_superseded ? "This revision is superseded - Do Not Cut" : "",
     revision.review_required ? revision.review_reason || "Review required before cutting" : "",
     !pdf ? "Cut-sheet PDF missing" : "",
-    !nc ? "NC file missing" : "",
+    !nc ? "NC filename check missing" : "",
   ].filter(Boolean);
   const jobRemakes = remakesForJob(jobItem.id).filter((item) => !["returned_to_job", "cancelled"].includes(item.status));
   const otherPatterns = cutPatternsForJob(jobItem.id)
@@ -3669,7 +3676,7 @@ function renderCuttingModeScreen(revisionId) {
             </div>
             <div class="cutting-big-actions">
               ${pdf?.file_url ? `<a class="primary-action cutting-big-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></a>` : `<span class="cutting-big-button disabled-action">PDF Missing<span>Rescan customer folder</span></span>`}
-              ${nc?.file_url ? `<a class="primary-action cutting-big-button" href="${escapeAttr(nc.file_url)}" target="_blank" rel="noreferrer">Open NC File<span>${escapeHtml(nc.original_filename)}</span></a>` : `<span class="cutting-big-button disabled-action">NC Missing<span>Rescan customer folder</span></span>`}
+              ${nc ? `<span class="cutting-big-button nc-reference">NC Filename Checked<span>${escapeHtml(nc.original_filename)} - ${escapeHtml(revision.filename_revision)}</span></span>` : `<span class="cutting-big-button disabled-action">NC Filename Missing<span>Rescan customer folder</span></span>`}
               <a class="ghost-button cutting-big-button" href="#/dymolabels?job_id=${encodeURIComponent(jobItem.id)}">Print Dymo Labels<span>Part labels + edge arrows</span></a>
               <a class="ghost-button cutting-big-button" href="#/folderimport?job_id=${encodeURIComponent(jobItem.id)}">Rescan Customer Folder<span>Pick up remakes / changed files</span></a>
             </div>
@@ -3709,7 +3716,7 @@ function renderCuttingModeScreen(revisionId) {
               ${metricRow("Pattern", pattern.pattern_number || "Not set")}
               ${metricRow("Revision", revision.filename_revision || "Not set")}
               ${metricRow("PDF", pdf ? "Ready" : "Missing")}
-              ${metricRow("NC", nc ? "Ready" : "Missing")}
+              ${metricRow("NC filename", nc ? "Checked" : "Missing")}
               ${metricRow("Review", revision.review_required ? "Required" : "No")}
             </div>
           </section>
@@ -3764,7 +3771,7 @@ function setRevisionCutting(revisionId) {
   const revision = cutRevisionById(revisionId);
   if (!revision) return;
   if (revision.is_superseded || !revision.is_current) return toast("Superseded - Do Not Cut. Use the current revision.");
-  if (!(revision.pdf_file_id && revision.nc_file_id)) return toast("PDF and NC file are required before cutting.");
+  if (!(revision.pdf_file_id && revision.nc_file_id)) return toast("A cut-sheet PDF and matching NC filename check are required before cutting.");
   if (Number(revision.completed_run_quantity || 0) >= Number(revision.required_run_quantity || 0)) return toast("This pattern is already cut complete.");
   revision.production_status = "cutting";
   revision.updated_at = nowIso();
@@ -3784,7 +3791,7 @@ function renderCutImportForm(params = {}) {
     <form class="panel form-grid" id="cutImportForm">
       ${selectField("Job", "job_id", selectedJobId, state.jobs.filter((jobItem) => jobItem.active).map((jobItem) => [jobItem.id, labelForJob(jobItem)]), true)}
       <div class="field full">
-        <label>Mozaik PDF / NC files
+        <label>Cut-sheet PDF / NC filename references
           <input name="files" type="file" multiple accept=".pdf,.nc,.cnc,.tap,.gcode,application/pdf" required />
         </label>
       </div>
@@ -3795,8 +3802,8 @@ function renderCutImportForm(params = {}) {
       ${field("Revision override", "filename_revision", "text", params.filename_revision || "")}
       ${textareaField("Import notes", "revision_notes", "", "full")}
       <section class="warning-panel full">
-        <strong>PDF versions:</strong> To add a revised PDF, use this same form. Upload the new PDF/NC pair and enter the new revision, for example <strong>R02</strong>. If Mozaik reused the same filename but the file changed, Run List keeps the old PDF and creates an internal version for review.<br><br>
-        <strong>Safety:</strong> Run List stores CNC files and tracks cutting progress. It does not execute, edit, or interpret G-code.
+        <strong>Versions:</strong> Add the revised cut-sheet PDF and select the matching NC files. Run List reads each NC filename and revision, but does not upload, store, open, or alter NC file contents. If a filename/version changes, it creates a review item.<br><br>
+        <strong>Safety:</strong> Run List stores the PDF reference and NC filename/version checks only. CNC software remains responsible for opening and running NC files.
       </section>
       <div class="form-actions full">
         <button class="primary-action" type="submit">Import files</button>
@@ -3871,14 +3878,14 @@ function renderMaterialFolderImportForm(params = {}) {
       <div class="field full checkbox-field">
         <label>
           <input name="shared_pdf" type="checkbox" checked />
-          Auto-select the cut-sheet PDF and link it to all matching NC files
+          Auto-select the cut-sheet PDF and check all matching NC filenames
         </label>
       </div>
       ${textareaField("Import notes", "revision_notes", "Customer folder scan / rescan", "full")}
       <section class="warning-panel full">
-        <strong>How to use:</strong> choose the customer folder from your synced Google Drive folder on this PC. Run List will find PDF and NC files inside that folder and its subfolders.<br><br>
-        <strong>Cut-sheet PDF:</strong> If there is one PDF, it uses that. If there are several, it prefers names like <strong>sheets.pdf</strong>, <strong>cut sheet</strong>, or a PDF in the main customer folder. If it cannot safely tell, it will ask you to rename the cut-sheet PDF to <strong>sheets.pdf</strong> and scan again.<br><br>
-        <strong>Rescan:</strong> Choose the same customer folder again later to pick up remakes, new NC files, or changed files. Old versions are kept and changes are flagged for review.
+        <strong>How to use:</strong> choose the customer folder from your synced Google Drive folder on this PC. Run List saves the cut-sheet PDF and scans NC filenames inside that folder and its subfolders.<br><br>
+        <strong>NC files:</strong> NC contents are not uploaded or opened by Run List. It records the filename, revision, file size, last-modified time, and folder path only, then checks each expected pattern has a matching NC reference.<br><br>
+        <strong>Rescan:</strong> Choose the same customer folder again later to pick up remakes, new NC files, renamed files, or newer versions. Changed references are flagged for review.
       </section>
       <div class="form-actions full">
         <button class="primary-action" type="submit">Scan customer folder</button>
@@ -3902,11 +3909,11 @@ async function handleFolderImportSubmit(event) {
     if (!jobItem) throw new Error("Choose a job.");
     const files = [...form.querySelector("input[type='file']").files]
       .filter((file) => fileKindForName(file.name));
-    if (!files.length) throw new Error("No PDF or CNC files found in that folder.");
+    if (!files.length) throw new Error("No cut-sheet PDF or NC filenames found in that folder.");
     const result = await importMaterialFolderForJob(jobItem, files, Object.fromEntries(formData.entries()));
     saveState();
-    const sharedMessage = result.sharedPdf ? ` Linked ${result.selectedPdfName || "the cut-sheet PDF"} to all imported NC patterns.` : "";
-    toast(`Customer folder imported: ${result.patterns} pattern(s), ${result.files} file(s).${sharedMessage}`);
+    const sharedMessage = result.sharedPdf ? ` Checked ${result.selectedPdfName || "the cut-sheet PDF"} against all NC filename references.` : "";
+    toast(`Customer folder checked: ${result.patterns} pattern(s), ${result.ncReferences || 0} NC filename(s) checked.${sharedMessage}`);
     navigate(`/jobs/${jobId}`);
   } catch (error) {
     toast(error.message);
@@ -3945,6 +3952,7 @@ async function importMaterialFolderForJob(jobItem, files, manual = {}) {
   const sharedPdfMode = Boolean(selectedSharedPdf && ncFiles.length > 0);
   let importedFiles = 0;
   let importedPatterns = 0;
+  let ncReferences = 0;
 
   if (manual.shared_pdf === "on" && !selectedSharedPdf && pdfFiles.length > 1 && ncFiles.length > 0) {
     throw new Error(`I found ${pdfFiles.length} PDFs and could not safely tell which one is the Mozaik cut-sheet PDF. Rename the correct one to sheets.pdf, then scan the customer folder again.`);
@@ -3969,10 +3977,11 @@ async function importMaterialFolderForJob(jobItem, files, manual = {}) {
       parsed.filename_revision = normalizeRevisionNumber(parsed.filename_revision || sharedParsed.filename_revision || "R01");
       const nc = await storeWorkshopFile(jobItem, file, parsed);
       importedFiles += 1;
+      ncReferences += 1;
       importCutFileGroup(jobItem, { parsed, pdf: sharedPdf, nc }, manual);
       importedPatterns += 1;
     }
-    return { files: importedFiles, patterns: importedPatterns, sharedPdf: true, selectedPdfName: selectedSharedPdf.name };
+    return { files: importedFiles, patterns: importedPatterns, ncReferences, sharedPdf: true, selectedPdfName: selectedSharedPdf.name };
   }
 
   await importCutFilesForJob(jobItem, files, manual);
@@ -3982,6 +3991,7 @@ async function importMaterialFolderForJob(jobItem, files, manual = {}) {
       const parsed = parseMozaikFilename(file.name);
       return `${parsed.material_code || manual.material_code || "UNKNOWN"}|${normalizePatternNumber(parsed.pattern_number || "S01")}|${normalizeRevisionNumber(parsed.filename_revision || "R01")}`;
     })).size,
+    ncReferences: ncFiles.length,
     sharedPdf: false,
   };
 }
@@ -4446,7 +4456,7 @@ function markRunsCut(revisionId, quantity) {
   const revision = cutRevisionById(revisionId);
   if (!revision) return;
   if (revision.is_superseded || !revision.is_current) return toast("Superseded — Do Not Cut. Use the current revision.");
-  if (!(revision.pdf_file_id && revision.nc_file_id)) return toast("PDF and NC file are required before cutting.");
+  if (!(revision.pdf_file_id && revision.nc_file_id)) return toast("A cut-sheet PDF and matching NC filename check are required before cutting.");
   const required = Number(revision.required_run_quantity || 0);
   const completed = Number(revision.completed_run_quantity || 0);
   if (completed + quantity > required) return toast(`Only ${required - completed} run(s) remaining.`);
@@ -4483,7 +4493,8 @@ async function deleteWorkshopFile(fileId) {
   const linkedRevisions = cutRevisionsUsingFile(fileId);
   const usage = file.file_kind === "pdf" ? pdfUsageSummary(fileId) : null;
   const sharedWarning = usage?.patternCount > 1 ? `\n\nThis looks like a shared/all-sheets PDF used by ${usage.patternCount} patterns.` : "";
-  const confirmed = window.confirm(`Remove ${file.file_kind?.toUpperCase() || "file"}: ${file.original_filename}?\n\nThis will unlink it from ${linkedRevisions.length} revision(s) and mark affected patterns as needing the correct file re-imported.${sharedWarning}\n\nThe original file on your computer will not be deleted.`);
+  const fileLabel = file.file_kind === "nc" ? "NC filename check" : (file.file_kind?.toUpperCase() || "file");
+  const confirmed = window.confirm(`Remove ${fileLabel}: ${file.original_filename}?\n\nThis will unlink it from ${linkedRevisions.length} revision(s) and mark affected patterns as needing the correct reference re-scanned.${sharedWarning}\n\nThe original file on your computer will not be deleted.`);
   if (!confirmed) return;
 
   linkedRevisions.forEach((revision) => {
@@ -5717,7 +5728,9 @@ function fileToDataUrl(file) {
 }
 
 async function storeWorkshopFile(jobItem, file, parsed) {
-  const hash = await hashFile(file);
+  const referenceOnly = parsed.file_kind === "nc";
+  const relativePath = file.webkitRelativePath || file.name;
+  const hash = referenceOnly ? `reference:${file.size}:${file.lastModified}:${relativePath}` : await hashFile(file);
   const existing = state.job_files.find((item) =>
     item.job_id === jobItem.id &&
     item.original_filename === file.name &&
@@ -5733,20 +5746,22 @@ async function storeWorkshopFile(jobItem, file, parsed) {
     Date.now(),
     `${uid("f").replace(/[^a-z0-9]/gi, "")}.${ext}`,
   ].join("_");
-  const storagePath = `${jobItem.id}/${internalName}`;
+  const storagePath = referenceOnly ? "" : `${jobItem.id}/${internalName}`;
   let fileUrl = "";
   let storage_path = storagePath;
-  try {
-    if (dataStore?.uploadJobFile) {
-      fileUrl = await dataStore.uploadJobFile(storagePath, file);
-    } else {
+  if (!referenceOnly) {
+    try {
+      if (dataStore?.uploadJobFile) {
+        fileUrl = await dataStore.uploadJobFile(storagePath, file);
+      } else {
+        fileUrl = await fileToDataUrl(file);
+        storage_path = "";
+      }
+    } catch (error) {
       fileUrl = await fileToDataUrl(file);
       storage_path = "";
+      toast(`Storage upload failed; kept ${file.name} in local/browser data.`);
     }
-  } catch (error) {
-    fileUrl = await fileToDataUrl(file);
-    storage_path = "";
-    toast(`Storage upload failed; kept ${file.name} in local/browser data.`);
   }
   const record = createJobFile({
     job_id: jobItem.id,
@@ -5757,7 +5772,9 @@ async function storeWorkshopFile(jobItem, file, parsed) {
     internal_filename: internalName,
     file_hash: hash,
     file_size: file.size,
-    mime_type: file.type || (parsed.file_kind === "pdf" ? "application/pdf" : "text/plain"),
+    mime_type: file.type || (parsed.file_kind === "pdf" ? "application/pdf" : "application/octet-stream"),
+    source: referenceOnly ? "folder_scan_reference" : "manual_upload",
+    notes: referenceOnly ? `Filename/version reference only. Source: ${relativePath}. Last modified: ${new Date(file.lastModified).toLocaleString()}.` : "",
   });
   state.job_files.unshift(record);
   return record;
