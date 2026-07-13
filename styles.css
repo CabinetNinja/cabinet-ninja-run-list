@@ -69,6 +69,19 @@ textarea {
   backdrop-filter: blur(14px);
 }
 
+/* Keep the title and Add button in their own grid columns when Back is hidden on Home. */
+.topbar > :nth-child(2) {
+  grid-column: 2;
+  min-width: 0;
+}
+
+#quickAddButton {
+  grid-column: 3;
+  width: auto;
+  justify-self: end;
+  white-space: nowrap;
+}
+
 .brand {
   margin: 0;
   color: var(--muted);
