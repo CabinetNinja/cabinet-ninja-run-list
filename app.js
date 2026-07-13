@@ -328,6 +328,8 @@ let remoteSaveQueue = Promise.resolve();
 let dashboardColumnsAvailable = true;
 let workshopTablesAvailable = true;
 let dymoLabelState = { labels: [], sheetFilter: "all", includeSeparators: true, edgeOrder: "left,top,right,bottom" };
+let customerFolderSelection = { files: [], name: "" };
+const customerFolderRelativePaths = new WeakMap();
 let pdfJsModule = null;
 
 const app = document.getElementById("app");
@@ -3867,9 +3869,12 @@ function renderMaterialFolderImportForm(params = {}) {
     <form class="panel form-grid" id="folderImportForm">
       ${selectField("Job", "job_id", selectedJobId, state.jobs.filter((jobItem) => jobItem.active).map((jobItem) => [jobItem.id, labelForJob(jobItem)]), true)}
       <div class="field full">
-        <label>Customer folder from Google Drive for Desktop
-          <input name="files" type="file" multiple webkitdirectory directory accept=".pdf,.nc,.cnc,.tap,.gcode,application/pdf" required />
-        </label>
+        <label>Customer folder from Google Drive for Desktop</label>
+        <div class="toolbar">
+          <button class="primary-action" id="chooseCustomerFolderButton" type="button">Choose customer folder</button>
+          <label class="ghost-button">Fallback: choose files<input id="customerFolderFiles" name="files" type="file" multiple webkitdirectory directory accept=".pdf,.nc,.cnc,.tap,.gcode,application/pdf" /></label>
+        </div>
+        <p class="muted" id="customerFolderSelectionStatus">No folder selected yet.</p>
         <p class="muted">Pick the main customer folder, for example the folder that contains the cut-sheet PDF and the material/CNC subfolders. The app scans inside the subfolders too.</p>
       </div>
       ${field("Material code override", "material_code", "text", params.material_code || "")}
@@ -3894,8 +3899,63 @@ function renderMaterialFolderImportForm(params = {}) {
     </form>
   `;
   document.getElementById("folderImportForm").addEventListener("submit", handleFolderImportSubmit);
+  document.getElementById("chooseCustomerFolderButton")?.addEventListener("click", chooseCustomerFolder);
+  document.getElementById("customerFolderFiles")?.addEventListener("change", handleCustomerFolderFallback);
 }
 
+function relativePathForCustomerFile(file) {
+  return customerFolderRelativePaths.get(file) || file.webkitRelativePath || file.name || "";
+}
+
+function updateCustomerFolderSelectionStatus(message) {
+  const status = document.getElementById("customerFolderSelectionStatus");
+  if (status) status.textContent = message;
+}
+
+function handleCustomerFolderFallback(event) {
+  const files = [...(event.target.files || [])];
+  customerFolderSelection = { files: [], name: "" };
+  const count = files.filter((file) => fileKindForName(file.name)).length;
+  updateCustomerFolderSelectionStatus(count ? `${count} PDF / NC file(s) selected from the fallback picker.` : "No PDF or NC files selected.");
+}
+
+async function chooseCustomerFolder() {
+  const fallback = document.getElementById("customerFolderFiles");
+  if (typeof window.showDirectoryPicker !== "function") {
+    updateCustomerFolderSelectionStatus("This browser does not offer the folder picker. Use Chrome or Edge on the workshop PC, or use the fallback picker.");
+    fallback?.click();
+    return;
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ mode: "read" });
+    const files = await collectCustomerFolderFiles(handle, handle.name);
+    customerFolderSelection = { files, name: handle.name };
+    const count = files.filter((file) => fileKindForName(file.name)).length;
+    updateCustomerFolderSelectionStatus(`${handle.name} selected - ${count} PDF / NC file(s) found in this folder and subfolders.`);
+  } catch (error) {
+    if (error?.name !== "AbortError") {
+      updateCustomerFolderSelectionStatus(`Could not read that folder: ${error.message}`);
+      toast(`Could not read that folder: ${error.message}`);
+    }
+  }
+}
+
+async function collectCustomerFolderFiles(directoryHandle, relativePath = "") {
+  const files = [];
+  for await (const [name, entry] of directoryHandle.entries()) {
+    const path = relativePath ? `${relativePath}/${name}` : name;
+    if (entry.kind === "directory") {
+      files.push(...await collectCustomerFolderFiles(entry, path));
+      continue;
+    }
+    if (entry.kind === "file") {
+      const file = await entry.getFile();
+      customerFolderRelativePaths.set(file, path);
+      files.push(file);
+    }
+  }
+  return files;
+}
 async function handleFolderImportSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -3907,8 +3967,8 @@ async function handleFolderImportSubmit(event) {
     const jobId = formData.get("job_id");
     const jobItem = jobById(jobId);
     if (!jobItem) throw new Error("Choose a job.");
-    const files = [...form.querySelector("input[type='file']").files]
-      .filter((file) => fileKindForName(file.name));
+    const selectedFiles = customerFolderSelection.files.length ? customerFolderSelection.files : [...form.querySelector("input[type='file']").files];
+    const files = selectedFiles.filter((file) => fileKindForName(file.name));
     if (!files.length) throw new Error("No cut-sheet PDF or NC filenames found in that folder.");
     const result = await importMaterialFolderForJob(jobItem, files, Object.fromEntries(formData.entries()));
     saveState();
@@ -3928,7 +3988,7 @@ function chooseCustomerCutSheetPdf(files) {
   if (pdfFiles.length === 1) return pdfFiles[0];
   const scored = pdfFiles.map((file) => {
     const name = String(file.name || "").toLowerCase();
-    const relativePath = String(file.webkitRelativePath || file.name || "").toLowerCase();
+    const relativePath = String(relativePathForCustomerFile(file)).toLowerCase();
     const depth = relativePath.split("/").filter(Boolean).length;
     let score = 0;
     if (/^sheets?\.pdf$/i.test(file.name)) score += 10;
@@ -5753,7 +5813,7 @@ function fileToDataUrl(file) {
 
 async function storeWorkshopFile(jobItem, file, parsed) {
   const referenceOnly = parsed.file_kind === "nc";
-  const relativePath = file.webkitRelativePath || file.name;
+  const relativePath = relativePathForCustomerFile(file);
   const hash = referenceOnly ? `reference:${file.size}:${file.lastModified}:${relativePath}` : await hashFile(file);
   const existing = state.job_files.find((item) =>
     item.job_id === jobItem.id &&
