@@ -4023,7 +4023,7 @@ function renderDymoLabelPrintForm(params = {}) {
       </div>
       <div class="field">
         <label>Print selection
-          <select id="dymoSheetFilter">
+          <select id="dymoSheetFilter" ${dymoLabelState.labels.length ? "" : "disabled"}>
             ${sheetOptionsForDymoLabels()}
           </select>
         </label>
@@ -4036,7 +4036,7 @@ function renderDymoLabelPrintForm(params = {}) {
       </div>
       <div class="form-actions full">
         <button class="primary-action" id="dymoParseButton" type="button">Read PDF</button>
-        <button class="ghost-button" id="dymoPrintButton" type="button" ${dymoLabelState.labels.length ? "" : "disabled"}>Print labels</button>
+        <button class="ghost-button" id="dymoPrintButton" type="button" ${dymoLabelState.labels.length ? "" : "disabled"}>${dymoPrintButtonText()}</button>
         <a class="ghost-button" href="${selectedJobId ? `#/jobs/${encodeURIComponent(selectedJobId)}` : "#/workshop"}">Back</a>
       </div>
       <section class="warning-panel full">
@@ -4058,9 +4058,11 @@ function renderDymoLabelPrintForm(params = {}) {
 
 function bindDymoLabelPrinter() {
   document.getElementById("dymoParseButton")?.addEventListener("click", handleDymoPdfParse);
+  document.getElementById("dymoPdfFile")?.addEventListener("change", handleDymoPdfParse);
   document.getElementById("dymoPrintButton")?.addEventListener("click", () => window.print());
   document.getElementById("dymoSheetFilter")?.addEventListener("change", (event) => {
     dymoLabelState.sheetFilter = event.target.value;
+    updateDymoPrintButton();
     renderDymoLabelPreview();
   });
   document.getElementById("dymoIncludeSeparators")?.addEventListener("change", (event) => {
@@ -4089,9 +4091,11 @@ async function handleDymoPdfParse() {
     const labels = await parseDymoLabelsFromPdf(file);
     if (!labels.length) throw new Error("No Mozaik part rows found. Check this is the cut-sheet PDF with the Part# table.");
     dymoLabelState.labels = labels;
-    dymoLabelState.sheetFilter = "all";
+    dymoLabelState.sheetFilter = dymoSheetGroups()[0]?.sheetKey || "all";
     document.getElementById("dymoSheetFilter").innerHTML = sheetOptionsForDymoLabels();
+    document.getElementById("dymoSheetFilter").disabled = false;
     document.getElementById("dymoPrintButton").disabled = false;
+    updateDymoPrintButton();
     renderDymoLabelPreview();
     setDymoLabelStatus(`${labels.length} label(s) ready from ${new Set(labels.map((label) => label.sheetKey)).size} sheet(s).`);
     toast("Dymo labels ready.");
@@ -4261,17 +4265,37 @@ function edgesFromBandValues(values, orderText) {
   return edges;
 }
 
+function dymoSheetGroups() {
+  return [...new Map(dymoLabelState.labels.map((label) => [label.sheetKey, label])).values()];
+}
+
+function dymoPrintButtonText() {
+  if (dymoLabelState.sheetFilter === "all") return "Print all sheets";
+  if (dymoLabelState.sheetFilter === "remakes") return "Print remake labels";
+  const selected = dymoSheetGroups().find((label) => label.sheetKey === dymoLabelState.sheetFilter);
+  return selected ? `Print sheet ${selected.sheetNumber}` : "Print labels";
+}
+
+function updateDymoPrintButton() {
+  const button = document.getElementById("dymoPrintButton");
+  if (button) button.textContent = dymoPrintButtonText();
+}
+
 function sheetOptionsForDymoLabels() {
   const selected = dymoLabelState.sheetFilter || "all";
-  const sheets = [...new Map(dymoLabelState.labels.map((label) => [label.sheetKey, label])).values()];
+  const sheets = dymoSheetGroups();
+  if (!sheets.length) return '<option value="all">Read PDF to load individual sheets</option>';
+  const remakes = dymoLabelState.labels.filter((label) => label.isRemake).length;
   return [
-    `<option value="all" ${selected === "all" ? "selected" : ""}>All sheets</option>`,
-    ...sheets.map((label) => `<option value="${escapeAttr(label.sheetKey)}" ${selected === label.sheetKey ? "selected" : ""}>Sheet ${escapeHtml(label.sheetNumber)} - ${escapeHtml(label.material)}</option>`),
+    `<option value="all" ${selected === "all" ? "selected" : ""}>All sheets (${sheets.length})</option>`,
+    ...sheets.map((label) => `<option value="${escapeAttr(label.sheetKey)}" ${selected === label.sheetKey ? "selected" : ""}>Sheet ${escapeHtml(label.sheetNumber)} / Pattern ${escapeHtml(label.patternNumber)} - ${escapeHtml(label.material)}</option>`),
+    ...(remakes ? [`<option value="remakes" ${selected === "remakes" ? "selected" : ""}>Remake labels only (${remakes})</option>`] : []),
   ].join("");
 }
 
 function visibleDymoLabels() {
   if (dymoLabelState.sheetFilter === "all") return dymoLabelState.labels;
+  if (dymoLabelState.sheetFilter === "remakes") return dymoLabelState.labels.filter((label) => label.isRemake);
   return dymoLabelState.labels.filter((label) => label.sheetKey === dymoLabelState.sheetFilter);
 }
 
