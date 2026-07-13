@@ -3295,6 +3295,7 @@ function workshopCurrentPatternItems() {
       return revision && jobItem ? { pattern, revision, jobItem } : null;
     })
     .filter(Boolean)
+    .filter((item) => item.jobItem.active !== false && !CLOSED_JOB_STATUSES.has(item.jobItem.status))
     .filter((item) => !["cancelled", "superseded"].includes(item.revision.production_status))
     .sort((a, b) => (a.jobItem.target_install_date || "9999").localeCompare(b.jobItem.target_install_date || "9999") || labelForJob(a.jobItem).localeCompare(labelForJob(b.jobItem)) || a.pattern.pattern_number.localeCompare(b.pattern.pattern_number));
 }
@@ -3544,6 +3545,7 @@ function currentWorkshopQueue() {
       return revision && jobItem ? { pattern, revision, jobItem } : null;
     })
     .filter(Boolean)
+    .filter((item) => item.jobItem.active !== false && !CLOSED_JOB_STATUSES.has(item.jobItem.status))
     .filter((item) => !["cut_complete", "cancelled", "superseded"].includes(item.revision.production_status))
     .sort((a, b) => (a.jobItem.target_install_date || "9999").localeCompare(b.jobItem.target_install_date || "9999") || a.pattern.pattern_number.localeCompare(b.pattern.pattern_number));
 }
