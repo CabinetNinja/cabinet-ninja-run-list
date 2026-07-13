@@ -3315,6 +3315,41 @@ function workshopPatternItemsForJob(jobId) {
     .filter((item) => item.revision);
 }
 
+function workshopJobCutSummary(jobId) {
+  const patterns = workshopPatternItemsForJob(jobId);
+  const complete = patterns.filter(({ revision }) =>
+    revision.is_current &&
+    !revision.is_superseded &&
+    !revision.review_required &&
+    Boolean(revision.pdf_file_id && revision.nc_file_id) &&
+    Number(revision.completed_run_quantity || 0) >= Number(revision.required_run_quantity || 0) &&
+    Number(revision.required_run_quantity || 0) > 0
+  ).length;
+  return {
+    total: patterns.length,
+    complete,
+    allComplete: patterns.length > 0 && complete === patterns.length,
+  };
+}
+
+function moveWorkshopJobToBuilding(jobId) {
+  const jobItem = jobById(jobId);
+  if (!jobItem) return;
+  const summary = workshopJobCutSummary(jobId);
+  if (!summary.allComplete) {
+    return toast(`${summary.complete} of ${summary.total} current sheet(s) are cut. Finish or resolve the remaining sheets first.`);
+  }
+  if (!window.confirm(`Move ${labelForJob(jobItem)} to Assembly / Building?\n\nAll ${summary.total} current sheet(s) are cut.`)) return;
+  const previousStatus = jobItem.status || "active";
+  jobItem.status = "assembly";
+  jobItem.active = true;
+  jobItem.updated_at = nowIso();
+  logActivity(jobItem.id, "job", jobItem.id, "Job moved to Assembly / Building", previousStatus, "assembly", "All current sheets cut");
+  saveState();
+  toast("Job moved to Assembly / Building.");
+  renderWorkshopDashboard();
+}
+
 function workshopQueueBucket({ revision }) {
   if (revision.review_required || revision.production_status === "problem" || !(revision.pdf_file_id && revision.nc_file_id)) return "problem";
   if (["cutting", "partially_cut"].includes(revision.production_status)) return "cutting";
@@ -3377,6 +3412,8 @@ function renderWorkshopEmptyHero() {
 function renderWorkshopCurrentJobHero({ pattern, revision, jobItem }) {
   const pdf = jobFileById(revision.pdf_file_id);
   const status = workshopStatusPill(revision);
+  const cutSummary = workshopJobCutSummary(jobItem.id);
+  const canMoveToBuilding = cutSummary.allComplete && jobItem.status !== "assembly";
   return `
     <section class="panel workshop-current-hero ${status.tone === "urgent" ? "danger-state" : ""}">
       <div class="workshop-current-title">
@@ -3396,6 +3433,7 @@ function renderWorkshopCurrentJobHero({ pattern, revision, jobItem }) {
         <a class="ghost-button" href="#/dymolabels?job_id=${encodeURIComponent(jobItem.id)}">Print Dymo Labels</a>
         <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(jobItem.id)}&revision_id=${encodeURIComponent(revision.id)}">Add Remake</a>
         <a class="ghost-button" href="#/cutting/${encodeURIComponent(revision.id)}">Cutting Mode</a>
+        ${canMoveToBuilding ? `<button class="primary-action move-job-to-building" data-job-id="${escapeAttr(jobItem.id)}" type="button">Move to Building</button>` : `<span class="status-pill ${cutSummary.allComplete ? "good" : ""}">${escapeHtml(cutSummary.total ? `${cutSummary.complete}/${cutSummary.total} sheets cut` : "No sheets imported")}</span>`}
       </div>
     </section>
   `;
@@ -3619,6 +3657,11 @@ function bindWorkshopButtons() {
     if (button.dataset.bound) return;
     button.dataset.bound = "true";
     button.addEventListener("click", () => deleteWorkshopFile(button.dataset.fileId));
+  });
+  document.querySelectorAll(".move-job-to-building").forEach((button) => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => moveWorkshopJobToBuilding(button.dataset.jobId));
   });
   document.querySelectorAll(".remake-status-select").forEach((select) => {
     if (select.dataset.bound) return;
