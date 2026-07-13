@@ -1069,8 +1069,11 @@ a.plain-button {
 
 @media (min-width: 1120px) {
   main:has(.workshop-refresh) {
-    width: calc(100vw - 238px);
-    max-width: 1500px;
+    width: min(1500px, calc(100vw - 190px));
+    max-width: none;
+    margin-right: 0;
+    margin-left: 190px;
+    padding-left: 24px;
   }
 }
 
@@ -1299,6 +1302,27 @@ a.plain-button {
   gap: 14px;
   margin-top: 14px;
   align-items: start;
+}
+
+.workshop-board-grid > *,
+.workshop-file-health,
+.workshop-pattern-panel {
+  min-width: 0;
+}
+
+.workshop-pattern-table {
+  max-width: 100%;
+}
+
+@media (max-width: 1550px) and (min-width: 1181px) {
+  .file-health-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .file-health-summary {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .file-health-grid {
