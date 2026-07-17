@@ -1324,6 +1324,7 @@ function createSupabaseStore(config) {
         email,
         options: {
           emailRedirectTo: `${location.origin}${location.pathname}`,
+          shouldCreateUser: false,
         },
       });
       if (error) throw error;
