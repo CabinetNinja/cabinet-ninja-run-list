@@ -46,7 +46,8 @@ const COMPLETED_STATUSES = new Set(["picked_up", "done", "cancelled"]);
 const CLOSED_JOB_STATUSES = new Set(["complete", "completed", "done", "cancelled", "archived"]);
 const CLOSED_LEAD_STATUSES = new Set(["job_accepted", "job_declined", "accepted", "won", "lost", "cancelled"]);
 const JOB_NUMBER_PREFIX = "CN";
-const JOB_NUMBER_PAD = 4;
+const LEAD_NUMBER_PREFIX = "CNL";
+const TRACKING_NUMBER_PAD = 4;
 
 const CNC_FILE_EXTENSIONS = new Set(["nc", "cnc", "tap", "gcode"]);
 const CUT_PATTERN_STATUS_OPTIONS = [
@@ -687,6 +688,7 @@ function normalizeState(data) {
       notes: item.notes || "",
     })),
     leads: (data.leads || []).map((item) => ({
+      lead_number: "",
       lead_name: "",
       client_name: "",
       phone: "",
@@ -703,6 +705,7 @@ function normalizeState(data) {
       converted_job_id: "",
       active: true,
       ...item,
+      lead_number: item.lead_number || "",
       lead_name: item.lead_name || "",
       client_name: item.client_name || "",
       phone: item.phone || "",
@@ -1351,6 +1354,7 @@ function cleanSupplier(item) {
 function cleanLead(item) {
   return pickDefined({
     id: item.id,
+    lead_number: item.lead_number || "",
     lead_name: item.lead_name || "",
     client_name: item.client_name || "",
     phone: item.phone || null,
@@ -1717,6 +1721,7 @@ function createLead(input) {
   const now = nowIso();
   return {
     id: uid("lead"),
+    lead_number: input.lead_number?.trim() || nextLeadNumber(),
     lead_name: input.lead_name?.trim() || input.job_name?.trim() || input.client_name?.trim() || "New lead",
     client_name: input.client_name?.trim() || "",
     phone: input.phone || "",
@@ -2613,6 +2618,7 @@ function renderLeadDetail(id) {
       <section class="panel">
         <h2>Lead Details</h2>
         <div class="list">
+          ${metricRow("Lead number", leadItem.lead_number || "Not assigned")}
           ${metricRow("Status", readable(leadItem.status))}
           ${metricRow("Priority", readable(leadItem.priority))}
           ${metricRow("Client", leadItem.client_name || "Not set")}
@@ -2637,9 +2643,14 @@ function renderLeadDetail(id) {
 function renderLeadForm(params = {}, id = null) {
   const editing = id ? leadById(id) : null;
   const leadItem = editing || createLead({});
+  const suggestedNumber = leadItem.lead_number || nextLeadNumber();
   setTitle(editing ? "Edit Lead" : "Add Lead");
   app.innerHTML = `
     <form class="panel form-grid" id="leadForm">
+      <div class="full">
+        <h2>Lead Number</h2>
+        <p class="muted">${leadItem.lead_number ? "This lead is tracked as" : "This lead will be saved as"} <strong>${escapeHtml(suggestedNumber)}</strong>.</p>
+      </div>
       ${field("Lead/job name", "lead_name", "text", leadItem.lead_name, "full", true)}
       ${field("Client name", "client_name", "text", leadItem.client_name)}
       ${field("Phone", "phone", "tel", leadItem.phone)}
@@ -2666,6 +2677,7 @@ function renderLeadForm(params = {}, id = null) {
     const nextValues = Object.fromEntries(form.entries());
     if (editing) {
       Object.assign(editing, nextValues, {
+        lead_number: editing.lead_number || nextLeadNumber(),
         active: !CLOSED_LEAD_STATUSES.has(nextValues.status),
         updated_at: nowIso(),
       });
@@ -2757,9 +2769,11 @@ function convertLeadToJob(id) {
     navigate(`/jobs/${existingJob.id}`);
     return;
   }
-  const nextJob = job(nextJobNumber(), leadItem.client_name || leadItem.lead_name, leadItem.lead_name, leadItem.location, "job_accepted");
+  const leadNumber = leadItem.lead_number || nextLeadNumber();
+  const nextJob = job(jobNumberForLead(leadNumber), leadItem.client_name || leadItem.lead_name, leadItem.lead_name, leadItem.location, "job_accepted");
   state.jobs.unshift(nextJob);
   Object.assign(leadItem, {
+    lead_number: leadNumber,
     status: "job_accepted",
     active: false,
     converted_job_id: nextJob.id,
@@ -5612,6 +5626,7 @@ function searchLeads(query) {
       leadItem.email,
       leadItem.location,
       leadItem.source,
+      leadItem.lead_number,
       leadItem.notes,
       readable(leadItem.status),
     ].join(" ").toLowerCase();
@@ -5633,17 +5648,36 @@ function labelForJob(jobItem) {
 }
 
 function nextJobNumber() {
-  const pattern = new RegExp(`^${JOB_NUMBER_PREFIX}-(\\d+)$`, "i");
-  const highest = state.jobs.reduce((max, jobItem) => {
-    const match = String(jobItem.job_number || "").match(pattern);
+  return nextTrackingNumber(JOB_NUMBER_PREFIX);
+}
+
+function nextLeadNumber() {
+  return nextTrackingNumber(LEAD_NUMBER_PREFIX);
+}
+
+function nextTrackingNumber(prefix) {
+  const pattern = new RegExp(`^(?:${JOB_NUMBER_PREFIX}|${LEAD_NUMBER_PREFIX})-(\\d+)$`, "i");
+  const trackingNumbers = [
+    ...state.jobs.map((jobItem) => jobItem.job_number),
+    ...state.leads.map((leadItem) => leadItem.lead_number),
+  ];
+  const highest = trackingNumbers.reduce((max, number) => {
+    const match = String(number || "").match(pattern);
     if (!match) return max;
     return Math.max(max, Number(match[1]) || 0);
   }, 0);
-  return `${JOB_NUMBER_PREFIX}-${String(highest + 1).padStart(JOB_NUMBER_PAD, "0")}`;
+  return `${prefix}-${String(highest + 1).padStart(TRACKING_NUMBER_PAD, "0")}`;
+}
+
+function jobNumberForLead(leadNumber) {
+  const match = String(leadNumber || "").match(new RegExp(`^${LEAD_NUMBER_PREFIX}-(\\d+)$`, "i"));
+  return match
+    ? `${JOB_NUMBER_PREFIX}-${String(Number(match[1])).padStart(TRACKING_NUMBER_PAD, "0")}`
+    : nextJobNumber();
 }
 
 function labelForLead(leadItem) {
-  return [leadItem.lead_name, leadItem.client_name && leadItem.client_name !== leadItem.lead_name ? leadItem.client_name : ""].filter(Boolean).join(" - ");
+  return [leadItem.lead_number, leadItem.lead_name, leadItem.client_name && leadItem.client_name !== leadItem.lead_name ? leadItem.client_name : ""].filter(Boolean).join(" - ");
 }
 
 function leadSortValue(leadItem) {

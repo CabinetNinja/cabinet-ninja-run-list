@@ -28,6 +28,7 @@ create table suppliers (
 
 create table leads (
   id text primary key default gen_random_uuid()::text,
+  lead_number text not null default '',
   lead_name text not null default '',
   client_name text not null default '',
   phone text,
@@ -144,6 +145,7 @@ create index items_needed_by_idx on items (needed_by);
 create index suppliers_active_idx on suppliers (active);
 create index leads_status_idx on leads (status, active);
 create index leads_follow_up_idx on leads (next_follow_up);
+create unique index leads_lead_number_unique_idx on leads (lead_number) where lead_number <> '';
 create index jobs_active_idx on jobs (active);
 create index material_template_items_template_idx on material_template_items (template_id, sort_order);
 

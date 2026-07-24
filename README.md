@@ -61,6 +61,8 @@ For an existing Supabase project that already has the original Run List tables, 
 
 Run `supabase-leads-migration.sql` once to add the lead tracking table to an existing project.
 
+Run `supabase-lead-number-migration.sql` once to store automatic `CNL-####` lead numbers. When a lead becomes a job, the app keeps the number and changes its prefix to `CN-####`.
+
 Run `supabase-dashboard-migration.sql` once on existing projects to add next-action and target install date fields used by the dashboard.
 
 Run `supabase-workshop-cnc-migration.sql` once on existing projects to add the Workshop/CNC cut pattern, file import, physical run, remake, and activity-history tables. It also creates a public Supabase Storage bucket named `job-files` for uploaded Mozaik PDFs and NC/CNC/TAP/GCODE files.
