@@ -329,7 +329,7 @@ let remoteSaveQueue = Promise.resolve();
 let dashboardColumnsAvailable = true;
 let workshopTablesAvailable = true;
 let dymoLabelState = { labels: [], sheetFilter: "all", includeSeparators: true, edgeOrder: "left,top,right,bottom" };
-let customerFolderSelection = { files: [], name: "" };
+let customerFolderSelection = { files: [], name: "", handle: null };
 const customerFolderRelativePaths = new WeakMap();
 let pdfJsModule = null;
 
@@ -3974,7 +3974,7 @@ function updateCustomerFolderSelectionStatus(message) {
 
 function handleCustomerFolderFallback(event) {
   const files = [...(event.target.files || [])];
-  customerFolderSelection = { files: [], name: "" };
+  customerFolderSelection = { files: [], name: "", handle: null };
   const count = files.filter((file) => fileKindForName(file.name)).length;
   updateCustomerFolderSelectionStatus(count ? `${count} PDF / NC file(s) selected from the fallback picker.` : "No PDF or NC files selected.");
 }
@@ -3988,10 +3988,8 @@ async function chooseCustomerFolder() {
   }
   try {
     const handle = await window.showDirectoryPicker({ mode: "read" });
-    const files = await collectCustomerFolderFiles(handle, handle.name);
-    customerFolderSelection = { files, name: handle.name };
-    const count = files.filter((file) => fileKindForName(file.name)).length;
-    updateCustomerFolderSelectionStatus(`${handle.name} selected - ${count} PDF / NC file(s) found in this folder and subfolders.`);
+    customerFolderSelection = { files: [], name: handle.name, handle };
+    updateCustomerFolderSelectionStatus(`${handle.name} selected. Scan customer folder to read every PDF and NC file in this folder and its material subfolders.`);
   } catch (error) {
     if (error?.name !== "AbortError") {
       updateCustomerFolderSelectionStatus(`Could not read that folder: ${error.message}`);
@@ -4027,9 +4025,17 @@ async function handleFolderImportSubmit(event) {
     const jobId = formData.get("job_id");
     const jobItem = jobById(jobId);
     if (!jobItem) throw new Error("Choose a job.");
+    if (customerFolderSelection.handle) {
+      updateCustomerFolderSelectionStatus(`Scanning ${customerFolderSelection.name} and its subfolders...`);
+      const files = await collectCustomerFolderFiles(customerFolderSelection.handle, customerFolderSelection.name);
+      customerFolderSelection = { files, name: customerFolderSelection.name, handle: customerFolderSelection.handle };
+    }
     const selectedFiles = customerFolderSelection.files.length ? customerFolderSelection.files : [...form.querySelector("input[type='file']").files];
     const files = selectedFiles.filter((file) => fileKindForName(file.name));
     if (!files.length) throw new Error("No cut-sheet PDF or NC filenames found in that folder.");
+    const pdfCount = files.filter((file) => fileKindForName(file.name) === "pdf").length;
+    const ncCount = files.length - pdfCount;
+    updateCustomerFolderSelectionStatus(`Found ${pdfCount} PDF and ${ncCount} NC file(s) across ${customerFolderSelection.name || "the selected folder"} and its subfolders.`);
     const result = await importMaterialFolderForJob(jobItem, files, Object.fromEntries(formData.entries()));
     saveState();
     const sharedMessage = result.sharedPdf ? ` Checked ${result.selectedPdfName || "the cut-sheet PDF"} against all NC filename references.` : "";
