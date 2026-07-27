@@ -4305,7 +4305,7 @@ function extractMozaikPartRows(lines) {
   const rows = [];
   let inTable = false;
   lines.forEach((line) => {
-    if (/^Part#\s+Name\s+Width\s+Length\s+Band\s+Cab#\s+Comment/i.test(line)) {
+    if (/^Part\s*#\s+Name\s+Width\s+Length\s+Band\s+Cab\s*#\s+Comment/i.test(line)) {
       inTable = true;
       return;
     }
@@ -4314,7 +4314,7 @@ function extractMozaikPartRows(lines) {
       inTable = false;
       return;
     }
-    const match = line.match(/^(\d+)\s+(.+?)\s+([\d,.]+)\s+([\d,.]+)\s+(None|[A-Z]-\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+)\s+(R\d+(?:F\d+)?C\d+)\b\s*(.*)$/i);
+    const match = line.match(/^(\d+)\s+(.+?)\s+([\d,.]+)\s+([\d,.]+)\s+(None|Custom\*?|[A-Z]-\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+)\s+((?:R\d+(?:F\d+)?(?:C\d+)?)|(?:N?\d+))\b\s*(.*)$/i);
     if (!match) return;
     rows.push({
       partNumber: match[1],
@@ -4370,7 +4370,7 @@ function shortPartCodeFromName(name) {
 }
 
 function parseBandValues(band) {
-  if (!band || /^None$/i.test(band)) return [0, 0, 0, 0];
+  if (!band || /^(None|Custom\*?)$/i.test(String(band).trim())) return [0, 0, 0, 0];
   const values = String(band).replace(/^[A-Z]-/i, "").split(",").map((value) => Number(value.trim()) || 0);
   while (values.length < 4) values.push(0);
   return values.slice(0, 4);
