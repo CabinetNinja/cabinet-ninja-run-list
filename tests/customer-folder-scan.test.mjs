@@ -46,3 +46,18 @@ test("scans every nested material folder and preserves each relative path", asyn
     "Reece Tewhaiti/18MMDF/nested/CabinetB-02.cnc",
   ]);
 });
+const pdfChooserStart = appSource.indexOf("function chooseCustomerCutSheetPdf(files) {");
+const pdfChooserEnd = appSource.indexOf("async function importMaterialFolderForJob(");
+
+test("accepts a single cut-sheet PDF with any filename", () => {
+  assert.notEqual(pdfChooserStart, -1, "cut-sheet chooser is present");
+  assert.notEqual(pdfChooserEnd, -1, "cut-sheet chooser has a boundary");
+  const context = vm.createContext({
+    fileKindForName: (name) => String(name).toLowerCase().endsWith(".pdf") ? "pdf" : "nc",
+    relativePathForCustomerFile: (file) => file.path || file.name,
+  });
+  vm.runInContext(appSource.slice(pdfChooserStart, pdfChooserEnd), context);
+  const pdf = { name: "Reece Tewhaiti labels.pdf", path: "Reece Tewhaiti/Reece Tewhaiti labels.pdf" };
+
+  assert.equal(context.chooseCustomerCutSheetPdf([pdf]), pdf);
+});

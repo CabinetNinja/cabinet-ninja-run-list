@@ -28,7 +28,7 @@ test("retires only a no-cuts UNKNOWN S01 shared-PDF placeholder", () => {
       { id: "actual", material_code: "16WHMR", pattern_number: "S01", status: "ready_for_cnc", current_revision_id: "actual-revision" },
     ],
     cut_pattern_revisions: [
-      { id: "legacy-revision", job_id: "job-1", cut_pattern_id: "legacy", pdf_file_id: "pdf-1", nc_file_id: "", is_current: true, is_superseded: false, review_required: true },
+      { id: "legacy-revision", job_id: "job-1", cut_pattern_id: "legacy", pdf_file_id: "legacy-pdf", nc_file_id: "", is_current: true, is_superseded: false, review_required: true },
       { id: "actual-revision", job_id: "job-1", cut_pattern_id: "actual", pdf_file_id: "pdf-1", nc_file_id: "nc-1", is_current: true, is_superseded: false, review_required: false },
     ],
     cut_runs: [],
@@ -47,7 +47,7 @@ test("retires only a no-cuts UNKNOWN S01 shared-PDF placeholder", () => {
 test("does not retire a placeholder with a completed cut", () => {
   const state = {
     cut_patterns: [{ id: "legacy", material_code: "UNKNOWN", pattern_number: "S01" }],
-    cut_pattern_revisions: [{ id: "legacy-revision", job_id: "job-1", cut_pattern_id: "legacy", pdf_file_id: "pdf-1", nc_file_id: "", is_current: true, is_superseded: false, review_required: true }],
+    cut_pattern_revisions: [{ id: "legacy-revision", job_id: "job-1", cut_pattern_id: "legacy", pdf_file_id: "legacy-pdf", nc_file_id: "", is_current: true, is_superseded: false, review_required: true }],
     cut_runs: [{ cut_pattern_revision_id: "legacy-revision" }],
     remake_requests: [],
   };

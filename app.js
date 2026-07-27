@@ -3296,7 +3296,7 @@ function renderWorkshopDashboard() {
         </div>
       </section>
 
-      <p class="workshop-tip">Tip: keep your Mozaik cut-sheet PDF named <strong>sheets.pdf</strong> for best auto-detection. Rescan the customer folder any time to pick up updates or remakes.</p>
+      <p class="workshop-tip">Tip: keep one Mozaik cut-sheet PDF in the customer folder. Its filename can be anything. Rescan the customer folder any time to pick up updates or remakes.</p>
     </div>
   `;
   bindWorkshopButtons();
@@ -3459,7 +3459,8 @@ function renderWorkshopMeta(label, value) {
 }
 
 function renderWorkshopFileHealthCard(selected, patternItems) {
-  const pdf = jobFileById(selected.revision.pdf_file_id);
+  const selectedPdf = jobFileById(selected.revision.pdf_file_id);
+  const sharedPdf = patternItems.map((item) => jobFileById(item.revision.pdf_file_id)).find(Boolean) || selectedPdf;
   const ncItems = patternItems.filter((item) => item.revision.nc_file_id);
   const ncCount = ncItems.length;
   const pdfLinked = patternItems.filter((item) => item.revision.pdf_file_id).length;
@@ -3481,7 +3482,7 @@ function renderWorkshopFileHealthCard(selected, patternItems) {
         <article class="file-health-tile">
           <span class="file-health-icon pdf">PDF</span>
           <strong>Shared cut-sheet PDF</strong>
-          <span>${escapeHtml(pdf?.original_filename || "Missing")}</span>
+          <span>${escapeHtml(sharedPdf?.original_filename || "Missing")}</span>
           <em>${pdfLinked ? `One PDF shared by ${pdfLinked} matched pattern(s)` : "PDF missing"}</em>
         </article>
         <article class="file-health-tile">
@@ -3499,7 +3500,7 @@ function renderWorkshopFileHealthCard(selected, patternItems) {
       </div>
       <div class="item-controls wrap-controls">
         <a class="primary-action" href="#/folderimport?job_id=${encodeURIComponent(selected.jobItem.id)}">Rescan Folder</a>
-        ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open PDF</a>` : ""}
+        ${sharedPdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(sharedPdf.file_url)}" target="_blank" rel="noreferrer">Open PDF</a>` : ""}
       </div>
     </section>
   `;
@@ -3907,8 +3908,8 @@ async function handleCutImportSubmit(event) {
 }
 
 async function importCutFilesForJob(jobItem, files, manual = {}) {
-  if (files.length === 1 && /^sheets?\.pdf$/i.test(String(files[0]?.name || ""))) {
-    throw new Error("sheets.pdf is a shared cut-sheet, not one cut pattern. Use Select Customer Folder so Run List can pair it with every NC filename.");
+  if (files.length === 1 && fileKindForName(files[0]?.name) === "pdf") {
+    throw new Error("This PDF is a shared cut-sheet, not one cut pattern. Use Select Customer Folder so Run List can pair it with every NC filename.");
   }
   const groups = {};
   for (const file of files) {
@@ -4061,12 +4062,15 @@ async function handleFolderImportSubmit(event) {
 
 function retireLegacySharedPdfPlaceholder(jobItem, sharedPdf) {
   if (!sharedPdf?.id) return 0;
+  const hasMatchingNcReferences = state.cut_pattern_revisions.some((revision) =>
+    revision.job_id === jobItem.id && revision.pdf_file_id === sharedPdf.id && Boolean(revision.nc_file_id)
+  );
+  if (!hasMatchingNcReferences) return 0;
   const retired = state.cut_pattern_revisions.filter((revision) => {
     const pattern = cutPatternById(revision.cut_pattern_id);
     const hasCompletedRuns = state.cut_runs.some((run) => run.cut_pattern_revision_id === revision.id);
     const hasLinkedRemakes = state.remake_requests.some((remake) => remake.source_cut_pattern_revision_id === revision.id || remake.destination_cut_pattern_revision_id === revision.id);
     return revision.job_id === jobItem.id &&
-      revision.pdf_file_id === sharedPdf.id &&
       !revision.nc_file_id &&
       revision.is_current &&
       !revision.is_superseded &&
@@ -4127,7 +4131,7 @@ async function importMaterialFolderForJob(jobItem, files, manual = {}) {
   let ncReferences = 0;
 
   if (manual.shared_pdf === "on" && !selectedSharedPdf && pdfFiles.length > 1 && ncFiles.length > 0) {
-    throw new Error(`I found ${pdfFiles.length} PDFs and could not safely tell which one is the Mozaik cut-sheet PDF. Rename the correct one to sheets.pdf, then scan the customer folder again.`);
+    throw new Error(`I found ${pdfFiles.length} PDFs and could not safely tell which one is the Mozaik cut-sheet PDF. Keep only the cut-sheet PDF in the customer folder, or use a descriptive cut-sheet filename, then scan again.`);
   }
 
   if (sharedPdfMode) {
