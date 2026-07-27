@@ -2099,9 +2099,9 @@ function remakeById(id) {
 function cutPatternsForJob(jobId) {
   return state.cut_patterns
     .filter((item) => item.job_id === jobId)
+    .filter((item) => Boolean(currentCutRevisionForPattern(item.id)))
     .sort((a, b) => `${a.material_code}-${a.pattern_number}`.localeCompare(`${b.material_code}-${b.pattern_number}`));
 }
-
 function cutRevisionsForPattern(patternId) {
   return state.cut_pattern_revisions
     .filter((item) => item.cut_pattern_id === patternId)
@@ -3460,10 +3460,17 @@ function renderWorkshopMeta(label, value) {
 
 function renderWorkshopFileHealthCard(selected, patternItems) {
   const pdf = jobFileById(selected.revision.pdf_file_id);
-  const ncCount = patternItems.filter((item) => item.revision.nc_file_id).length;
+  const ncItems = patternItems.filter((item) => item.revision.nc_file_id);
+  const ncCount = ncItems.length;
   const pdfLinked = patternItems.filter((item) => item.revision.pdf_file_id).length;
   const reviewCount = patternItems.filter((item) => item.revision.review_required).length;
   const missingCount = patternItems.filter((item) => !(item.revision.pdf_file_id && item.revision.nc_file_id)).length;
+  const ncByMaterial = new Map();
+  ncItems.forEach(({ pattern }) => {
+    const material = pattern.material_description || pattern.material_code || "Material";
+    ncByMaterial.set(material, (ncByMaterial.get(material) || 0) + 1);
+  });
+  const ncMaterialSummary = [...ncByMaterial.entries()].map(([material, count]) => `${material}: ${count}`).join(" | ") || "No NC files found";
   return `
     <section class="panel workshop-file-health">
       <div class="section-heading">
@@ -3473,20 +3480,20 @@ function renderWorkshopFileHealthCard(selected, patternItems) {
       <div class="file-health-grid">
         <article class="file-health-tile">
           <span class="file-health-icon pdf">PDF</span>
-          <strong>Cut-sheet PDF</strong>
+          <strong>Shared cut-sheet PDF</strong>
           <span>${escapeHtml(pdf?.original_filename || "Missing")}</span>
-          <em>${pdfLinked} of ${patternItems.length} pattern(s) linked</em>
+          <em>${pdfLinked ? `One PDF shared by ${pdfLinked} matched pattern(s)` : "PDF missing"}</em>
         </article>
         <article class="file-health-tile">
           <span class="file-health-icon nc">CNC</span>
-          <strong>NC Filename Checks</strong>
-          <span>${ncCount} NC filename(s) checked</span>
-          <em>${ncCount === patternItems.length ? "All pattern names checked" : `${patternItems.length - ncCount} missing`}</em>
+          <strong>NC filename references</strong>
+          <span>${ncCount} recognised .NC file(s)</span>
+          <em>${escapeHtml(ncMaterialSummary)}</em>
         </article>
         <article class="file-health-summary">
-          ${metricRow("PDF status", pdfLinked ? "Found" : "Missing")}
-          ${metricRow("NC filename status", ncCount === patternItems.length ? "Checked" : "Missing")}
-          ${metricRow("Patterns linked", `${Math.min(pdfLinked, ncCount)} of ${patternItems.length}`)}
+          ${metricRow("Shared PDF", pdfLinked ? "Found" : "Missing")}
+          ${metricRow("NC filenames", ncCount === patternItems.length ? "All matched" : `${ncCount} matched`)}
+          ${metricRow("Pattern pairs", `${Math.min(pdfLinked, ncCount)} of ${patternItems.length}`)}
           ${metricRow("Review required", reviewCount ? String(reviewCount) : "No")}
         </article>
       </div>
@@ -3497,7 +3504,6 @@ function renderWorkshopFileHealthCard(selected, patternItems) {
     </section>
   `;
 }
-
 function renderWorkshopCutPatternsTable(selected, patternItems) {
   return `
     <section class="panel workshop-pattern-panel">
@@ -3901,6 +3907,9 @@ async function handleCutImportSubmit(event) {
 }
 
 async function importCutFilesForJob(jobItem, files, manual = {}) {
+  if (files.length === 1 && /^sheets?\.pdf$/i.test(String(files[0]?.name || ""))) {
+    throw new Error("sheets.pdf is a shared cut-sheet, not one cut pattern. Use Select Customer Folder so Run List can pair it with every NC filename.");
+  }
   const groups = {};
   for (const file of files) {
     const parsed = parseMozaikFilename(file.name);
@@ -4039,13 +4048,49 @@ async function handleFolderImportSubmit(event) {
     const result = await importMaterialFolderForJob(jobItem, files, Object.fromEntries(formData.entries()));
     saveState();
     const sharedMessage = result.sharedPdf ? ` Checked ${result.selectedPdfName || "the cut-sheet PDF"} against all NC filename references.` : "";
-    toast(`Customer folder checked: ${result.patterns} pattern(s), ${result.ncReferences || 0} NC filename(s) checked.${sharedMessage}`);
-    navigate(`/jobs/${jobId}`);
+    const cleanupMessage = result.retiredLegacyPatterns ? ` Retired ${result.retiredLegacyPatterns} old PDF-only placeholder${result.retiredLegacyPatterns === 1 ? "" : "s"}.` : "";
+    toast(`Customer folder checked: ${result.patterns} pattern(s), ${result.ncReferences || 0} NC filename(s) checked.${sharedMessage}${cleanupMessage}`);
+    navigate(/jobs/);
   } catch (error) {
     toast(error.message);
     submit.disabled = false;
     submit.textContent = "Scan customer folder";
   }
+}
+
+function retireLegacySharedPdfPlaceholder(jobItem, sharedPdf) {
+  if (!sharedPdf?.id) return 0;
+  const retired = state.cut_pattern_revisions.filter((revision) => {
+    const pattern = cutPatternById(revision.cut_pattern_id);
+    const hasCompletedRuns = state.cut_runs.some((run) => run.cut_pattern_revision_id === revision.id);
+    const hasLinkedRemakes = state.remake_requests.some((remake) => remake.source_cut_pattern_revision_id === revision.id || remake.destination_cut_pattern_revision_id === revision.id);
+    return revision.job_id === jobItem.id &&
+      revision.pdf_file_id === sharedPdf.id &&
+      !revision.nc_file_id &&
+      revision.is_current &&
+      !revision.is_superseded &&
+      revision.review_required &&
+      !hasCompletedRuns &&
+      !hasLinkedRemakes &&
+      pattern?.material_code === "UNKNOWN" &&
+      pattern?.pattern_number === "S01";
+  });
+  retired.forEach((revision) => {
+    const pattern = cutPatternById(revision.cut_pattern_id);
+    revision.is_current = false;
+    revision.is_superseded = true;
+    revision.production_status = "superseded";
+    revision.review_required = false;
+    revision.review_reason = "";
+    revision.updated_at = nowIso();
+    if (pattern) {
+      pattern.current_revision_id = "";
+      pattern.status = "superseded";
+      pattern.updated_at = nowIso();
+    }
+    logActivity(jobItem.id, "cut_pattern_revision", revision.id, "Legacy PDF-only placeholder retired", "UNKNOWN S01", sharedPdf.original_filename || "shared cut-sheet PDF");
+  });
+  return retired.length;
 }
 
 function chooseCustomerCutSheetPdf(files) {
@@ -4107,7 +4152,8 @@ async function importMaterialFolderForJob(jobItem, files, manual = {}) {
       importCutFileGroup(jobItem, { parsed, pdf: sharedPdf, nc }, manual);
       importedPatterns += 1;
     }
-    return { files: importedFiles, patterns: importedPatterns, ncReferences, sharedPdf: true, selectedPdfName: selectedSharedPdf.name };
+    const retiredLegacyPatterns = retireLegacySharedPdfPlaceholder(jobItem, sharedPdf);
+    return { files: importedFiles, patterns: importedPatterns, ncReferences, sharedPdf: true, selectedPdfName: selectedSharedPdf.name, retiredLegacyPatterns };
   }
 
   await importCutFilesForJob(jobItem, files, manual);
