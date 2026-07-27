@@ -4050,7 +4050,8 @@ async function handleFolderImportSubmit(event) {
     const sharedMessage = result.sharedPdf ? ` Checked ${result.selectedPdfName || "the cut-sheet PDF"} against all NC filename references.` : "";
     const cleanupMessage = result.retiredLegacyPatterns ? ` Retired ${result.retiredLegacyPatterns} old PDF-only placeholder${result.retiredLegacyPatterns === 1 ? "" : "s"}.` : "";
     toast(`Customer folder checked: ${result.patterns} pattern(s), ${result.ncReferences || 0} NC filename(s) checked.${sharedMessage}${cleanupMessage}`);
-    navigate(/jobs/);
+    const workshopRevision = workshopPatternItemsForJob(jobId)[0]?.revision;
+    navigate(`/workshop${workshopRevision ? `?revision_id=${encodeURIComponent(workshopRevision.id)}` : ""}`);
   } catch (error) {
     toast(error.message);
     submit.disabled = false;
