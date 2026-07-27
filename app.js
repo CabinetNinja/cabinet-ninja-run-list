@@ -4173,20 +4173,46 @@ async function importMaterialFolderForJob(jobItem, files, manual = {}) {
   };
 }
 
+function sharedCutSheetPdfForJob(jobId) {
+  if (!jobId) return null;
+  const usage = new Map();
+  state.cut_pattern_revisions
+    .filter((revision) => revision.job_id === jobId && revision.is_current && !revision.is_superseded && revision.pdf_file_id)
+    .forEach((revision) => usage.set(revision.pdf_file_id, (usage.get(revision.pdf_file_id) || 0) + 1));
+  const shared = [...usage.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([fileId]) => jobFileById(fileId))
+    .find((file) => file?.file_kind === "pdf" && file.file_url);
+  return shared || state.job_files.find((file) => file.job_id === jobId && file.file_kind === "pdf" && file.file_url) || null;
+}
+
+async function fileFromStoredJobPdf(file) {
+  if (!file?.file_url) throw new Error("This job does not have a readable saved cut-sheet PDF. Rescan the customer folder or choose a PDF below.");
+  const response = await fetch(file.file_url);
+  if (!response.ok) throw new Error(`Could not load ${file.original_filename || "the saved cut-sheet PDF"}. Choose it from your computer or rescan the customer folder.`);
+  const blob = await response.blob();
+  return new File([blob], file.original_filename || "cut-sheet.pdf", { type: blob.type || file.mime_type || "application/pdf" });
+}
 function renderDymoLabelPrintForm(params = {}) {
   const selectedJobId = params.job_id || "";
+  const loadedPdf = sharedCutSheetPdfForJob(selectedJobId);
   setTitle("Dymo Labels");
   const jobOptions = state.jobs.filter((jobItem) => jobItem.active).map((jobItem) => [jobItem.id, labelForJob(jobItem)]);
   app.innerHTML = `
     <section class="panel form-grid dymo-label-panel">
       <div class="full">
         <h2>Print Dymo 11352 part labels</h2>
-        <p class="muted">Upload a Mozaik cut-sheet PDF. Run List reads the part table, uses the banding numbers as arrows, and prints labels relative to the PDF sheet picture.</p>
+        <p class="muted">Read the saved Mozaik cut-sheet PDF for this job. Run List reads the part table, uses the banding numbers as arrows, and prints labels relative to the PDF sheet picture.</p>
       </div>
       ${selectField("Job", "job_id", selectedJobId, jobOptions, false)}
       <div class="field">
-        <label>Mozaik cut-sheet PDF
-          <input id="dymoPdfFile" type="file" accept="application/pdf,.pdf" required />
+        <label>Saved cut-sheet PDF</label>
+        <strong id="dymoLoadedPdfName">${escapeHtml(loadedPdf?.original_filename || "No saved PDF for this job")}</strong>
+        <span class="muted">${loadedPdf ? "Read the PDF already loaded from the customer folder." : "Rescan the customer folder, or choose a PDF from this computer."}</span>
+      </div>
+      <div class="field">
+        <label>Optional replacement PDF
+          <input id="dymoPdfFile" type="file" accept="application/pdf,.pdf" />
         </label>
       </div>
       <div class="field">
@@ -4212,14 +4238,14 @@ function renderDymoLabelPrintForm(params = {}) {
         </label>
       </div>
       <div class="form-actions full">
-        <button class="primary-action" id="dymoParseButton" type="button">Read PDF</button>
+        <button class="primary-action" id="dymoParseButton" type="button" ${loadedPdf ? "" : "disabled"}>${loadedPdf ? "Read saved PDF" : "No saved PDF"}</button>
         <button class="ghost-button" id="dymoPrintButton" type="button" ${dymoLabelState.labels.length ? "" : "disabled"}>${dymoPrintButtonText()}</button>
         <a class="ghost-button" href="${selectedJobId ? `#/jobs/${encodeURIComponent(selectedJobId)}` : "#/workshop"}">Back</a>
       </div>
       <section class="warning-panel full">
         <strong>Label rule:</strong> arrows are relative to the PDF sheet picture. Non-zero banding numbers print arrows; zero prints nothing. Default order is <strong>left, top, right, bottom</strong>.
       </section>
-      <p class="muted full" id="dymoLabelStatus">${dymoLabelState.labels.length ? `${dymoLabelState.labels.length} label(s) ready.` : "Choose a PDF and click Read PDF."}</p>
+      <p class="muted full" id="dymoLabelStatus">${dymoLabelState.labels.length ? `${dymoLabelState.labels.length} label(s) ready.` : (loadedPdf ? "Read the saved PDF to create labels." : "Choose a job with a saved PDF, or select a replacement PDF.")}</p>
     </section>
     <section class="panel full dymo-preview-panel">
       <div class="section-heading">
@@ -4232,10 +4258,10 @@ function renderDymoLabelPrintForm(params = {}) {
   bindDymoLabelPrinter();
   renderDymoLabelPreview();
 }
-
 function bindDymoLabelPrinter() {
-  document.getElementById("dymoParseButton")?.addEventListener("click", handleDymoPdfParse);
-  document.getElementById("dymoPdfFile")?.addEventListener("change", handleDymoPdfParse);
+  document.getElementById("dymoParseButton")?.addEventListener("click", () => handleDymoPdfParse());
+  document.getElementById("dymoPdfFile")?.addEventListener("change", () => handleDymoPdfParse({ useSelectedFile: true }));
+  document.querySelector("[name='job_id']")?.addEventListener("change", (event) => navigate(`/dymolabels?job_id=${encodeURIComponent(event.target.value)}`));
   document.getElementById("dymoPrintButton")?.addEventListener("click", () => window.print());
   document.getElementById("dymoSheetFilter")?.addEventListener("change", (event) => {
     dymoLabelState.sheetFilter = event.target.value;
@@ -4255,16 +4281,24 @@ function bindDymoLabelPrinter() {
     renderDymoLabelPreview();
   });
 }
-
-async function handleDymoPdfParse() {
+async function handleDymoPdfParse({ useSelectedFile = false } = {}) {
   const fileInput = document.getElementById("dymoPdfFile");
+  const jobId = document.querySelector("[name='job_id']")?.value || "";
   const button = document.getElementById("dymoParseButton");
-  const file = fileInput?.files?.[0];
-  if (!file) return toast("Choose a PDF first.");
+  const selectedFile = fileInput?.files?.[0];
+  const storedPdf = sharedCutSheetPdfForJob(jobId);
+  let file = selectedFile;
+  let sourceName = selectedFile?.name || "";
   button.disabled = true;
   button.textContent = "Reading PDF...";
-  setDymoLabelStatus("Reading Mozaik PDF...");
   try {
+    if (!useSelectedFile) {
+      if (!storedPdf) throw new Error("This job has no saved cut-sheet PDF. Rescan the customer folder or choose a PDF below.");
+      file = await fileFromStoredJobPdf(storedPdf);
+      sourceName = storedPdf.original_filename || file.name;
+    }
+    if (!file) throw new Error("Choose a PDF first.");
+    setDymoLabelStatus(`Reading ${sourceName}...`);
     const labels = await parseDymoLabelsFromPdf(file);
     if (!labels.length) throw new Error("No Mozaik part rows found. Check this is the cut-sheet PDF with the Part# table.");
     dymoLabelState.labels = labels;
@@ -4274,17 +4308,16 @@ async function handleDymoPdfParse() {
     document.getElementById("dymoPrintButton").disabled = false;
     updateDymoPrintButton();
     renderDymoLabelPreview();
-    setDymoLabelStatus(`${labels.length} label(s) ready from ${new Set(labels.map((label) => label.sheetKey)).size} sheet(s).`);
+    setDymoLabelStatus(`${labels.length} label(s) ready from ${new Set(labels.map((label) => label.sheetKey)).size} sheet(s): ${sourceName}.`);
     toast("Dymo labels ready.");
   } catch (error) {
     setDymoLabelStatus(error.message);
     toast(error.message);
   } finally {
     button.disabled = false;
-    button.textContent = "Read PDF";
+    button.textContent = storedPdf ? "Read saved PDF" : "Read PDF";
   }
 }
-
 function setDymoLabelStatus(message) {
   const status = document.getElementById("dymoLabelStatus");
   if (status) status.textContent = message;
