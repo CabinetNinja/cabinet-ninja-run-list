@@ -969,6 +969,17 @@ a.plain-button {
   align-items: flex-start;
 }
 
+.dymo-sheet-selection {
+  display: grid;
+  gap: 10px;
+}
+
+.dymo-sheet-checkboxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px 14px;
+}
+
 .dymo-label {
   width: 54mm;
   height: 25mm;
@@ -1685,6 +1696,11 @@ a.plain-button {
     height: 25mm;
     break-after: page;
     page-break-after: always;
+  }
+
+  .dymo-label:last-of-type {
+    break-after: auto;
+    page-break-after: auto;
   }
 }
 

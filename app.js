@@ -328,7 +328,7 @@ let backendStatus = {
 let remoteSaveQueue = Promise.resolve();
 let dashboardColumnsAvailable = true;
 let workshopTablesAvailable = true;
-let dymoLabelState = { labels: [], sheetFilter: "all", includeSeparators: true, edgeOrder: "left,top,right,bottom" };
+let dymoLabelState = { labels: [], selectedSheetKeys: [], includeSeparators: true, edgeOrder: "left,top,right,bottom" };
 let customerFolderSelection = { files: [], name: "", handle: null };
 const customerFolderRelativePaths = new WeakMap();
 let pdfJsModule = null;
@@ -3190,6 +3190,7 @@ function renderPatternVersionHistory(pattern, revisions) {
                 ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View this PDF</a>` : '<span class="status-pill warning">No PDF</span>'}
                 ${pdf ? renderPdfUsageNote(pdf) : ""}
                 ${renderNcReferenceBadge(nc)}
+                ${revision.review_required && !revision.is_superseded ? `<button class="primary-action activate-reviewed-revision" data-revision-id="${escapeAttr(revision.id)}" type="button">Use this scanned revision</button>` : ""}
                 ${pdf ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(pdf.id)}" type="button">Remove PDF</button>` : ""}
                 ${nc ? `<button class="danger-button delete-workshop-file" data-file-id="${escapeAttr(nc.id)}" type="button">Remove NC check</button>` : ""}
               </div>
@@ -3221,6 +3222,18 @@ function bindJobWorkshopArea(jobId) {
   bindWorkshopButtons();
 }
 
+function activateReviewedRevision(revisionId) {
+  const revision = cutRevisionById(revisionId);
+  const pattern = revision && cutPatternById(revision.cut_pattern_id);
+  if (!revision || !pattern) return toast("That scanned revision is no longer available.");
+  const confirmed = window.confirm(`Use ${revision.pdf_filename || "this scanned PDF"} as the current revision for Pattern ${pattern.pattern_number}?\n\nThe earlier revision will be kept as superseded. Check the sheets already cut before continuing.`);
+  if (!confirmed) return;
+  makeRevisionCurrent(pattern, revision);
+  logActivity(revision.job_id, "cut_pattern_revision", revision.id, "Scanned revision approved", "review required", "current");
+  saveState();
+  render();
+  toast("Scanned revision is now current.");
+}
 function renderWorkshopMobileBlocker() {
   return `
     <section class="panel workshop-mobile-only mobile-workshop-blocker">
@@ -3685,6 +3698,11 @@ function bindWorkshopButtons() {
     if (button.dataset.bound) return;
     button.dataset.bound = "true";
     button.addEventListener("click", () => deleteWorkshopFile(button.dataset.fileId));
+  });
+  document.querySelectorAll(".activate-reviewed-revision").forEach((button) => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => activateReviewedRevision(button.dataset.revisionId));
   });
   document.querySelectorAll(".move-job-to-building").forEach((button) => {
     if (button.dataset.bound) return;
@@ -4236,12 +4254,9 @@ function renderDymoLabelPrintForm(params = {}) {
           </select>
         </label>
       </div>
-      <div class="field">
-        <label>Print selection
-          <select id="dymoSheetFilter" ${dymoLabelState.labels.length ? "" : "disabled"}>
-            ${sheetOptionsForDymoLabels()}
-          </select>
-        </label>
+      <div class="field full">
+        <label>Sheets to print</label>
+        <div id="dymoSheetSelection" class="dymo-sheet-selection">${renderDymoSheetSelection()}</div>
       </div>
       <div class="field checkbox-field">
         <label>
@@ -4275,11 +4290,7 @@ function bindDymoLabelPrinter() {
   document.getElementById("dymoParseButton")?.addEventListener("click", handleDymoPdfParse);
   document.querySelector("[name='job_id']")?.addEventListener("change", (event) => navigate(`/dymolabels?job_id=${encodeURIComponent(event.target.value)}`));
   document.getElementById("dymoPrintButton")?.addEventListener("click", () => window.print());
-  document.getElementById("dymoSheetFilter")?.addEventListener("change", (event) => {
-    dymoLabelState.sheetFilter = event.target.value;
-    updateDymoPrintButton();
-    renderDymoLabelPreview();
-  });
+  bindDymoSheetSelection();
   document.getElementById("dymoIncludeSeparators")?.addEventListener("change", (event) => {
     dymoLabelState.includeSeparators = event.target.checked;
     renderDymoLabelPreview();
@@ -4307,9 +4318,8 @@ async function handleDymoPdfParse() {
     const labels = await parseDymoLabelsFromPdf(file);
     if (!labels.length) throw new Error("No Mozaik part rows found. Check this is the cut-sheet PDF with the Part# table.");
     dymoLabelState.labels = labels;
-    dymoLabelState.sheetFilter = dymoSheetGroups()[0]?.sheetKey || "all";
-    document.getElementById("dymoSheetFilter").innerHTML = sheetOptionsForDymoLabels();
-    document.getElementById("dymoSheetFilter").disabled = false;
+    dymoLabelState.selectedSheetKeys = dymoSheetGroups().map((sheet) => sheet.sheetKey);
+    refreshDymoSheetSelection();
     document.getElementById("dymoPrintButton").disabled = false;
     updateDymoPrintButton();
     renderDymoLabelPreview();
@@ -4485,33 +4495,75 @@ function dymoSheetGroups() {
 }
 
 function dymoPrintButtonText() {
-  if (dymoLabelState.sheetFilter === "all") return "Print all sheets";
-  if (dymoLabelState.sheetFilter === "remakes") return "Print remake labels";
-  const selected = dymoSheetGroups().find((label) => label.sheetKey === dymoLabelState.sheetFilter);
-  return selected ? `Print sheet ${selected.sheetNumber}` : "Print labels";
+  const count = selectedDymoSheetKeys().length;
+  if (!count) return "Choose sheets to print";
+  return `Print ${count} sheet${count === 1 ? "" : "s"}`;
 }
 
 function updateDymoPrintButton() {
   const button = document.getElementById("dymoPrintButton");
-  if (button) button.textContent = dymoPrintButtonText();
+  if (button) {
+    button.textContent = dymoPrintButtonText();
+    button.disabled = selectedDymoSheetKeys().length === 0;
+  }
 }
 
-function sheetOptionsForDymoLabels() {
-  const selected = dymoLabelState.sheetFilter || "all";
+function selectedDymoSheetKeys() {
+  const available = new Set(dymoSheetGroups().map((sheet) => sheet.sheetKey));
+  return dymoLabelState.selectedSheetKeys.filter((sheetKey) => available.has(sheetKey));
+}
+
+function renderDymoSheetSelection() {
   const sheets = dymoSheetGroups();
-  if (!sheets.length) return '<option value="all">Read PDF to load individual sheets</option>';
-  const remakes = dymoLabelState.labels.filter((label) => label.isRemake).length;
-  return [
-    `<option value="all" ${selected === "all" ? "selected" : ""}>All sheets (${sheets.length})</option>`,
-    ...sheets.map((label) => `<option value="${escapeAttr(label.sheetKey)}" ${selected === label.sheetKey ? "selected" : ""}>Sheet ${escapeHtml(label.sheetNumber)} / Pattern ${escapeHtml(label.patternNumber)} - ${escapeHtml(label.material)}</option>`),
-    ...(remakes ? [`<option value="remakes" ${selected === "remakes" ? "selected" : ""}>Remake labels only (${remakes})</option>`] : []),
-  ].join("");
+  if (!sheets.length) return '<p class="muted">Read the PDF to choose individual sheets.</p>';
+  const selected = new Set(selectedDymoSheetKeys());
+  return `
+    <div class="toolbar">
+      <button class="ghost-button" id="dymoSelectAllSheets" type="button">Select all (${sheets.length})</button>
+      <button class="ghost-button" id="dymoClearSheets" type="button">Clear selection</button>
+    </div>
+    <div class="dymo-sheet-checkboxes">
+      ${sheets.map((sheet) => `
+        <label class="checkbox-field">
+          <input class="dymo-sheet-checkbox" type="checkbox" value="${escapeAttr(sheet.sheetKey)}" ${selected.has(sheet.sheetKey) ? "checked" : ""} />
+          Sheet ${escapeHtml(sheet.sheetNumber)} / Pattern ${escapeHtml(sheet.patternNumber)} - ${escapeHtml(sheet.material)}
+        </label>
+      `).join("")}
+    </div>
+  `;
+}
+
+function bindDymoSheetSelection() {
+  document.getElementById("dymoSelectAllSheets")?.addEventListener("click", () => {
+    dymoLabelState.selectedSheetKeys = dymoSheetGroups().map((sheet) => sheet.sheetKey);
+    refreshDymoSheetSelection();
+  });
+  document.getElementById("dymoClearSheets")?.addEventListener("click", () => {
+    dymoLabelState.selectedSheetKeys = [];
+    refreshDymoSheetSelection();
+  });
+  document.querySelectorAll(".dymo-sheet-checkbox").forEach((input) => {
+    input.addEventListener("change", () => {
+      const selected = new Set(dymoLabelState.selectedSheetKeys);
+      if (input.checked) selected.add(input.value);
+      else selected.delete(input.value);
+      dymoLabelState.selectedSheetKeys = [...selected];
+      refreshDymoSheetSelection();
+    });
+  });
+}
+
+function refreshDymoSheetSelection() {
+  const target = document.getElementById("dymoSheetSelection");
+  if (target) target.innerHTML = renderDymoSheetSelection();
+  bindDymoSheetSelection();
+  updateDymoPrintButton();
+  renderDymoLabelPreview();
 }
 
 function visibleDymoLabels() {
-  if (dymoLabelState.sheetFilter === "all") return dymoLabelState.labels;
-  if (dymoLabelState.sheetFilter === "remakes") return dymoLabelState.labels.filter((label) => label.isRemake);
-  return dymoLabelState.labels.filter((label) => label.sheetKey === dymoLabelState.sheetFilter);
+  const selected = new Set(selectedDymoSheetKeys());
+  return dymoLabelState.labels.filter((label) => selected.has(label.sheetKey));
 }
 
 function renderDymoLabelPreview() {
@@ -4616,8 +4668,8 @@ function importCutFileGroup(jobItem, group, manual = {}) {
     file_hash_pdf: group.pdf?.file_hash || "",
     file_hash_nc: group.nc?.file_hash || "",
     revision_notes: manual.revision_notes || "",
-    review_required: Boolean(changedSameName || previousHadCuts),
-    review_reason: changedSameName ? "File changed without a filename revision increase." : previousHadCuts ? "Previous revision already has completed runs. Review remaining quantity." : "",
+    review_required: Boolean(previousHadCuts),
+    review_reason: previousHadCuts ? "Previous revision already has completed runs. Confirm this re-optimised file before making further cuts." : "",
   });
   revision.production_status = calculateProductionStatus(revision);
   state.cut_pattern_revisions.unshift(revision);
