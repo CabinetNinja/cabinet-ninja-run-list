@@ -1,0 +1,11 @@
+-- Cabinet Ninja production-schema baseline marker.
+-- Remote project: xoyzmjbjbaknvgtoofar
+-- Remote migration version verified read-only: 202607240001
+--
+-- This is intentionally a NO-OP migration. Its sole purpose is to make the
+-- local migration ledger correspond to the existing remote history. The
+-- verified schema is documented in ../baseline/202607240001-production-schema.md.
+--
+-- Do not add DDL here. The remote version already exists, and a historical
+-- baseline must never recreate, overwrite, or mutate existing production
+-- objects. Use a new, reviewed version for every future schema change.
