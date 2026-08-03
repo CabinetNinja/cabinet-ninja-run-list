@@ -14,7 +14,7 @@ This is a proposal only. It makes no production change and does not enable custo
 | Install | Site delivery, installation, handover, and job photos. | Named internal staff or approved contractors. |
 | Read-only coordinator | Visibility for management or bookkeeper-style operational reference. | Named internal users only; no operational writes. |
 
-Do not use Supabase Auth roles alone as the business model. Store role membership in an application-owned staff-membership table keyed to auth.users.id, with a company/tenant key reserved even if Cabinet Ninja has one company today. RLS should use security-definer helper functions that read membership without recursive policy problems.
+Do not use Supabase Auth roles alone as the business model. Phase 1B uses an application-owned staff_profiles table keyed to auth.users.id, with one active internal role per person. A company/tenant key is intentionally deferred because Cabinet Ninja is currently single-company. RLS uses security-definer helper functions that read membership without recursive policy problems.
 
 ## Proposed data permissions
 
@@ -22,7 +22,7 @@ Do not use Supabase Auth roles alone as the business model. Store role membershi
 | --- | --- | --- | --- | --- | --- |
 | Leads | Full | Create/read/update; no hard delete | No access by default | No access by default | Read summary only |
 | Customers and contacts (future) | Full | Create/read/update | Read job-scoped contact/site details | Read assigned-job contact/site details | Read only |
-| Jobs | Full | Create/read/update commercial, planning, and schedule fields | Read assigned/active jobs; update production/CNC fields | Read assigned jobs; update install/handover fields | Read only |
+| Jobs | Full | Create/read/update commercial, planning, and schedule fields | Read active jobs; update production/CNC fields | Read active jobs; update install/handover fields | Read only |
 | Run-list records/items | Full | Create/read/update | Create/read/update production-related items | Read assigned-job items; update delivery/install completion only | Read only |
 | Suppliers | Full | Create/read/update | Read; propose changes through workflow | No access by default | Read only |
 | Checklist templates | Full | Create/read/update | Read and complete job instances | Read and complete install job instances | Read only |
@@ -30,16 +30,16 @@ Do not use Supabase Auth roles alone as the business model. Store role membershi
 | Files and photos | Full | Upload/read job commercial/admin files | Upload/read workshop files for active jobs | Upload/read assigned-job site photos/documents | Metadata/read only, no download by default |
 | Activity/audit history | Read all; exceptional correction through controlled tooling only | Append system-generated events; read relevant | Append system-generated events; read relevant | Append system-generated events; read relevant | Read only |
 
-Assignment-scoped access should use an explicit job_assignments table. Until assignment workflows are implemented, Workshop and Install should be given read/update access to active operational jobs only, not customer-wide access.
+Assignment-scoped access should use the explicit Phase 1B job_assignments table. It currently records responsibility, filtering, and notifications only: until assignment workflows are implemented, Workshop and Install receive active operational job access only, not customer-wide access.
 
 ## Private job-file model
 
-1. Create a new private bucket, for example job-files-private. Do not flip the existing public bucket in place.
+1. Keep the verified job-files bucket identifier for PWA compatibility, but make that bucket private only in a separately approved cutover. Do not rename, delete, or overwrite existing objects as part of the change.
 2. Store object paths only in job_files; stop storing public file_url values as the authoritative location. Keep a display filename, MIME type, size, content hash, category, confidentiality level, and created-by metadata.
 3. Use Storage RLS policies that require an authenticated staff member and verify role plus job assignment/role scope from the object path and job_files metadata. Grant uploads only to the roles that may create that file category.
 4. Generate short-lived signed URLs from a server-side boundary (Edge Function or future backend), after checking the requesting user's membership and job/file permission. Never expose service-role credentials in the browser.
 5. Prefer authenticated Storage download for first-party internal PWA views. Signed URLs are appropriate for direct browser preview/download and must expire quickly, be non-cacheable in app state, and be regenerated on demand.
-6. Migrate files copy-first, verify hash/count/metadata, update the database pointer atomically, then retain the public source during a defined rollback window. Delete public copies only after explicit approval and backup verification.
+6. Existing public URLs remain read-compatible until their inventory, backup evidence, and signed-URL behaviour are verified. Do not delete public copies or rename existing paths during the first cutover; establish a separate, approved retention and retirement plan.
 
 ## Future customer access, not enabled now
 

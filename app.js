@@ -50,6 +50,10 @@ const LEAD_NUMBER_PREFIX = "CNL";
 const TRACKING_NUMBER_PAD = 4;
 
 const CNC_FILE_EXTENSIONS = new Set(["nc", "cnc", "tap", "gcode"]);
+const JOB_FILE_MAX_BYTES = 50 * 1024 * 1024;
+const JOB_FILE_PRIVATE_PREFIX = "jobs";
+const JOB_FILE_ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "heic", "pdf", "txt", "csv", "doc", "docx", "xls", "xlsx", "dxf", "dwg"]);
+const JOB_FILE_BLOCKED_EXTENSIONS = new Set(["exe", "com", "bat", "cmd", "msi", "ps1", "js", "mjs", "vbs", "jar", "sh", "zip", "rar", "7z", "html", "htm", "svg"]);
 const CUT_PATTERN_STATUS_OPTIONS = [
   ["files_incomplete", "Files incomplete"],
   ["ready_for_cnc", "Ready for CNC"],
@@ -353,6 +357,10 @@ async function initializeApp() {
   }
   quickAddButton.addEventListener("click", () => navigate("/add"));
   backButton.addEventListener("click", () => history.back());
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-open-job-file]");
+    if (button) openJobFile(button.dataset.openJobFile);
+  });
   renderLoading();
 
   dataStore = createDataStore();
@@ -776,7 +784,7 @@ function normalizeState(data) {
       section_name: item.section_name || "",
       sort_order: Number(item.sort_order || 0),
     })),
-    checklist_template_items: (data.checklist_template_items || []).map((item) => ({
+    checklist_template_items: (data.checklist_template_items || []).filter((item) => !item.archived_at).map((item) => ({
       required: true,
       default_notes: "",
       allow_photo: false,
@@ -826,7 +834,7 @@ function normalizeState(data) {
       issue_status: item.issue_status || "none",
       sort_order: Number(item.sort_order || 0),
     })),
-    job_files: (data.job_files || []).map((item) => ({
+    job_files: (data.job_files || []).filter((item) => !item.archived_at).map((item) => ({
       job_id: "",
       storage_path: "",
       file_url: "",
@@ -1301,32 +1309,42 @@ function createSupabaseStore(config) {
     },
     saveState: saveFullState,
     async deleteItem(id) {
-      const { error } = await client.from("items").delete().eq("id", id);
+      const { error } = await client.from("items").update({ status: "cancelled" }).eq("id", id);
       if (error) throw error;
     },
     async deleteChecklistTemplateItem(id) {
-      const { error } = await client.from("checklist_template_items").delete().eq("id", id);
+      const { error } = await client.from("checklist_template_items").update({ archived_at: nowIso() }).eq("id", id);
       if (error) throw error;
     },
     async deleteJobFile(id) {
-      const { error } = await client.from("job_files").delete().eq("id", id);
+      const { error } = await client.from("job_files").update({
+        archived_at: nowIso(),
+        archived_reason: "Archived from Run List; storage object retained for retention review.",
+        is_superseded: true,
+      }).eq("id", id);
       if (error) throw error;
     },
     async uploadJobFile(path, file) {
       if (!workshopTablesAvailable) throw new Error("Run supabase-workshop-cnc-migration.sql before uploading workshop files.");
+      if (file.size > JOB_FILE_MAX_BYTES) throw new Error("Job files must be 50 MB or smaller.");
       const { error } = await client.storage.from("job-files").upload(path, file, {
         cacheControl: "3600",
         upsert: false,
       });
       if (error) throw error;
-      const { data } = client.storage.from("job-files").getPublicUrl(path);
-      return data?.publicUrl || "";
+      return "";
     },
     async downloadJobFile(path) {
       if (!path) throw new Error("Saved PDF path is missing.");
       const { data, error } = await client.storage.from("job-files").download(path);
       if (error) throw error;
       return data;
+    },
+    async getSignedJobFileUrl(fileId) {
+      const { data, error } = await client.functions.invoke("job-file-url", { body: { fileId } });
+      if (error) throw error;
+      if (!data?.url) throw new Error("A signed file URL was not returned.");
+      return data.url;
     },
     async signInWithEmail(email) {
       const { error } = await client.auth.signInWithOtp({
@@ -1560,6 +1578,9 @@ function cleanJobFile(item) {
     source: item.source || "manual_upload",
     notes: item.notes || null,
     is_superseded: Boolean(item.is_superseded),
+    archived_at: item.archived_at || null,
+    archived_by: item.archived_by || null,
+    archived_reason: item.archived_reason || null,
   });
 }
 
@@ -3149,7 +3170,7 @@ function renderCutPatternSummary(pattern) {
         <div class="progress-bar"><span style="width:${pct}%"></span></div>
       </div>
       <div class="item-controls wrap-controls">
-        ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
+        ${jobFileOpenControl(pdf, "View PDF")}
         ${pdf ? renderPdfUsageNote(pdf) : ""}
         ${renderNcReferenceBadge(nc)}
         <a class="primary-action" href="#/cutting/${encodeURIComponent(current.id)}">Cutting Mode</a>
@@ -3187,7 +3208,7 @@ function renderPatternVersionHistory(pattern, revisions) {
                 ${revision.review_reason ? `<p class="danger-text">${escapeHtml(revision.review_reason)}</p>` : ""}
               </div>
               <div class="item-controls wrap-controls">
-                ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View this PDF</a>` : '<span class="status-pill warning">No PDF</span>'}
+                ${jobFileOpenControl(pdf, "View this PDF")}
                 ${pdf ? renderPdfUsageNote(pdf) : ""}
                 ${renderNcReferenceBadge(nc)}
                 ${revision.review_required && !revision.is_superseded ? `<button class="primary-action activate-reviewed-revision" data-revision-id="${escapeAttr(revision.id)}" type="button">Use this scanned revision</button>` : ""}
@@ -3463,7 +3484,7 @@ function renderWorkshopCurrentJobHero({ pattern, revision, jobItem }) {
       </div>
       <div class="workshop-hero-actions">
         <a class="primary-action" href="#/folderimport?job_id=${encodeURIComponent(jobItem.id)}">Select Customer Folder</a>
-        ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open Cut-Sheet PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
+        ${jobFileOpenControl(pdf, "Open Cut-Sheet PDF")}
         <a class="ghost-button" href="#/dymolabels?job_id=${encodeURIComponent(jobItem.id)}">Print Dymo Labels</a>
         <a class="ghost-button" href="#/remakeform?job_id=${encodeURIComponent(jobItem.id)}&revision_id=${encodeURIComponent(revision.id)}">Add Remake</a>
         <a class="ghost-button" href="#/cutting/${encodeURIComponent(revision.id)}">Cutting Mode</a>
@@ -3519,7 +3540,7 @@ function renderWorkshopFileHealthCard(selected, patternItems) {
       </div>
       <div class="item-controls wrap-controls">
         <a class="primary-action" href="#/folderimport?job_id=${encodeURIComponent(selected.jobItem.id)}">Rescan Folder</a>
-        ${sharedPdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(sharedPdf.file_url)}" target="_blank" rel="noreferrer">Open PDF</a>` : ""}
+        ${sharedPdf ? jobFileOpenControl(sharedPdf, "Open PDF") : ""}
       </div>
     </section>
   `;
@@ -3649,7 +3670,7 @@ function renderWorkshopQueueCard({ pattern, revision, jobItem }) {
       </div>
       <p class="muted">${escapeHtml([jobItem.target_install_date ? `Install ${formatDate(jobItem.target_install_date)}` : "", linkedRemakes.length ? `${linkedRemakes.length} linked remakes` : "No linked remakes", jobItem.next_action].filter(Boolean).join(" - "))}</p>
       <div class="item-controls wrap-controls">
-        ${pdf?.file_url ? `<a class="ghost-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">View PDF</a>` : '<span class="status-pill warning">PDF missing</span>'}
+        ${jobFileOpenControl(pdf, "View PDF")}
         ${pdf ? renderPdfUsageNote(pdf) : ""}
         ${renderNcReferenceBadge(nc)}
         <a class="primary-action" href="#/cutting/${encodeURIComponent(revision.id)}">Cutting Mode</a>
@@ -3768,7 +3789,7 @@ function renderCuttingModeScreen(revisionId) {
               <span class="count-pill">Only what you need</span>
             </div>
             <div class="cutting-big-actions">
-              ${pdf?.file_url ? `<a class="primary-action cutting-big-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></a>` : `<span class="cutting-big-button disabled-action">PDF Missing<span>Rescan customer folder</span></span>`}
+              ${pdf ? (pdf.storage_path?.startsWith(`${JOB_FILE_PRIVATE_PREFIX}/`) ? `<button class="primary-action cutting-big-button" type="button" data-open-job-file="${escapeAttr(pdf.id)}">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></button>` : pdf.file_url ? `<a class="primary-action cutting-big-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></a>` : `<span class="cutting-big-button disabled-action">PDF Unavailable<span>Rescan customer folder</span></span>`) : `<span class="cutting-big-button disabled-action">PDF Missing<span>Rescan customer folder</span></span>`}
               ${nc ? `<span class="cutting-big-button nc-reference">NC Filename Checked<span>${escapeHtml(nc.original_filename)} - ${escapeHtml(revision.filename_revision)}</span></span>` : `<span class="cutting-big-button disabled-action">NC Filename Missing<span>Rescan customer folder</span></span>`}
               <a class="ghost-button cutting-big-button" href="#/dymolabels?job_id=${encodeURIComponent(jobItem.id)}">Print Dymo Labels<span>Part labels + edge arrows</span></a>
               <a class="ghost-button cutting-big-button" href="#/folderimport?job_id=${encodeURIComponent(jobItem.id)}">Rescan Customer Folder<span>Pick up remakes / changed files</span></a>
@@ -4208,6 +4229,35 @@ function sharedCutSheetPdfForJob(jobId) {
     .map(([fileId]) => jobFileById(fileId))
     .find((file) => file?.file_kind === "pdf");
   return shared || state.job_files.find((file) => file.job_id === jobId && file.file_kind === "pdf") || null;
+}
+
+async function openJobFile(fileId) {
+  const file = jobFileById(fileId);
+  if (!file) return toast("File not found.");
+  try {
+    if (file.storage_path?.startsWith(`${JOB_FILE_PRIVATE_PREFIX}/`) && dataStore?.getSignedJobFileUrl) {
+      window.open(await dataStore.getSignedJobFileUrl(file.id), "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (file.file_url) {
+      window.open(file.file_url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    throw new Error("No readable file location is available.");
+  } catch (error) {
+    toast(`Could not open ${file.original_filename || "file"}: ${error.message}`);
+  }
+}
+
+function jobFileOpenControl(file, label = "Open file") {
+  if (!file) return '<span class="status-pill warning">File missing</span>';
+  if (file.storage_path?.startsWith(`${JOB_FILE_PRIVATE_PREFIX}/`)) {
+    return `<button class="ghost-button" type="button" data-open-job-file="${escapeAttr(file.id)}">${escapeHtml(label)}</button>`;
+  }
+  if (file.file_url) {
+    return `<a class="ghost-button" href="${escapeAttr(file.file_url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`;
+  }
+  return '<span class="status-pill warning">File unavailable</span>';
 }
 
 async function fileFromStoredJobPdf(file) {
@@ -6040,6 +6090,7 @@ function fileToDataUrl(file) {
 
 async function storeWorkshopFile(jobItem, file, parsed) {
   const referenceOnly = parsed.file_kind === "nc";
+  if (!referenceOnly) assertJobFileAllowed(file);
   const relativePath = relativePathForCustomerFile(file);
   const hash = referenceOnly ? `reference:${file.size}:${file.lastModified}:${relativePath}` : await hashFile(file);
   const existing = state.job_files.find((item) =>
@@ -6057,7 +6108,7 @@ async function storeWorkshopFile(jobItem, file, parsed) {
     Date.now(),
     `${uid("f").replace(/[^a-z0-9]/gi, "")}.${ext}`,
   ].join("_");
-  const storagePath = referenceOnly ? "" : `${jobItem.id}/${internalName}`;
+  const storagePath = referenceOnly ? "" : `${JOB_FILE_PRIVATE_PREFIX}/${jobItem.id}/${internalName}`;
   let fileUrl = "";
   let storage_path = storagePath;
   if (!referenceOnly) {
@@ -6083,12 +6134,25 @@ async function storeWorkshopFile(jobItem, file, parsed) {
     internal_filename: internalName,
     file_hash: hash,
     file_size: file.size,
-    mime_type: file.type || (parsed.file_kind === "pdf" ? "application/pdf" : "application/octet-stream"),
+    mime_type: file.type || (parsed.file_kind === "pdf" ? "application/pdf" : null),
     source: referenceOnly ? "folder_scan_reference" : "manual_upload",
     notes: referenceOnly ? `Filename/version reference only. Source: ${relativePath}. Last modified: ${new Date(file.lastModified).toLocaleString()}.` : "",
   });
   state.job_files.unshift(record);
   return record;
+}
+
+function assertJobFileAllowed(file) {
+  if (file.size > JOB_FILE_MAX_BYTES) {
+    throw new Error("Files must be 50 MiB or smaller.");
+  }
+  const extension = fileExtension(file.name).toLowerCase();
+  if (JOB_FILE_BLOCKED_EXTENSIONS.has(extension)) {
+    throw new Error(`.${extension} files are not allowed.`);
+  }
+  if (!JOB_FILE_ALLOWED_EXTENSIONS.has(extension)) {
+    throw new Error("This file type is not approved for job-file storage.");
+  }
 }
 
 function formatDateTime(value) {

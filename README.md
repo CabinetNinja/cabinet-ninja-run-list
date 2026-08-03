@@ -67,6 +67,12 @@ Run `supabase-dashboard-migration.sql` once on existing projects to add next-act
 
 Run `supabase-workshop-cnc-migration.sql` once on existing projects to add the Workshop/CNC cut pattern, file import, physical run, remake, and activity-history tables. It also creates a public Supabase Storage bucket named `job-files` for uploaded Mozaik PDFs and NC/CNC/TAP/GCODE files.
 
+## Security foundation (not deployed)
+
+The Phase 1A production audit confirmed that the historical scripts above describe an unrestricted authenticated-user model and a public `job-files` bucket. Do not rerun those legacy scripts against the verified production project.
+
+The reviewed Phase 1B migrations in `supabase/migrations/202607240002` through `202607240005` are source-controlled future changes only. They must not be pushed or applied until Adam has approved the documented role assignment, data-access, backup, and after-hours Storage cutover decisions in `PHASE-1B-SECURITY-FOUNDATION.md` and `PROPOSED-ACCESS-MODEL.md`.
+
 ## Running locally
 
 Open `index.html` directly for a quick check, or serve the folder over HTTP for full PWA behavior.
