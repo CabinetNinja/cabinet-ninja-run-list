@@ -4098,7 +4098,7 @@ function retireLegacySharedPdfPlaceholder(jobItem, sharedPdf) {
       !revision.nc_file_id &&
       revision.is_current &&
       !revision.is_superseded &&
-    
+      revision.review_required &&
       !hasCompletedRuns &&
       !hasLinkedRemakes &&
       pattern?.material_code === "UNKNOWN" &&

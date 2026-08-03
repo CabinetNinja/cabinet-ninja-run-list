@@ -995,8 +995,8 @@ a.plain-button {
 
 .dymo-part-label {
   display: grid;
-  grid-template-rows: 5mm 7mm 5mm 5mm;
-  padding: 1mm 1.5mm;
+  grid-template-rows: 6mm 7.5mm 6mm 4mm;
+  padding: 0.5mm 1mm;
   text-align: center;
   align-items: center;
   font-family: Arial, Helvetica, sans-serif;
@@ -1010,23 +1010,23 @@ a.plain-button {
 }
 
 .dymo-arrow {
-  font-size: 15pt;
+  font-size: 19pt;
   font-weight: 900;
-  line-height: 1;
+  line-height: 0.85;
   min-height: 4mm;
 }
 
 .dymo-arrow-left,
 .dymo-arrow-right {
-  font-size: 17pt;
+  font-size: 21pt;
 }
 
 .dymo-part-code {
   display: grid;
   gap: 0.5mm;
-  font-size: 13pt;
+  font-size: 15pt;
   font-weight: 900;
-  line-height: 1;
+  line-height: 0.9;
   text-transform: uppercase;
   white-space: nowrap;
   overflow: hidden;
@@ -1040,8 +1040,8 @@ a.plain-button {
 }
 
 .dymo-dimensions {
-  font-size: 9pt;
-  font-weight: 800;
+  font-size: 10pt;
+  font-weight: 900;
   line-height: 1;
   white-space: nowrap;
 }
