@@ -54,6 +54,13 @@ const JOB_FILE_MAX_BYTES = 50 * 1024 * 1024;
 const JOB_FILE_PRIVATE_PREFIX = "jobs";
 const JOB_FILE_ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "heic", "pdf", "txt", "csv", "doc", "docx", "xls", "xlsx", "dxf", "dwg"]);
 const JOB_FILE_BLOCKED_EXTENSIONS = new Set(["exe", "com", "bat", "cmd", "msi", "ps1", "js", "mjs", "vbs", "jar", "sh", "zip", "rar", "7z", "html", "htm", "svg"]);
+const JOB_FILE_MIME_BY_EXTENSION = {
+  jpg: ["image/jpeg"], jpeg: ["image/jpeg"], png: ["image/png"], webp: ["image/webp"], heic: ["image/heic"],
+  pdf: ["application/pdf"], txt: ["text/plain"], csv: ["text/csv"], doc: ["application/msword"],
+  docx: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"], xls: ["application/vnd.ms-excel"],
+  xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"], dxf: ["application/dxf", "application/acad"],
+  dwg: ["application/x-dwg", "application/acad"],
+};
 const CUT_PATTERN_STATUS_OPTIONS = [
   ["files_incomplete", "Files incomplete"],
   ["ready_for_cnc", "Ready for CNC"],
@@ -3789,7 +3796,7 @@ function renderCuttingModeScreen(revisionId) {
               <span class="count-pill">Only what you need</span>
             </div>
             <div class="cutting-big-actions">
-              ${pdf ? (pdf.storage_path?.startsWith(`${JOB_FILE_PRIVATE_PREFIX}/`) ? `<button class="primary-action cutting-big-button" type="button" data-open-job-file="${escapeAttr(pdf.id)}">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></button>` : pdf.file_url ? `<a class="primary-action cutting-big-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></a>` : `<span class="cutting-big-button disabled-action">PDF Unavailable<span>Rescan customer folder</span></span>`) : `<span class="cutting-big-button disabled-action">PDF Missing<span>Rescan customer folder</span></span>`}
+              ${pdf ? (pdf.storage_path && dataStore?.getSignedJobFileUrl ? `<button class="primary-action cutting-big-button" type="button" data-open-job-file="${escapeAttr(pdf.id)}">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></button>` : pdf.file_url ? `<a class="primary-action cutting-big-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></a>` : `<span class="cutting-big-button disabled-action">PDF Unavailable<span>Rescan customer folder</span></span>`) : `<span class="cutting-big-button disabled-action">PDF Missing<span>Rescan customer folder</span></span>`}
               ${nc ? `<span class="cutting-big-button nc-reference">NC Filename Checked<span>${escapeHtml(nc.original_filename)} - ${escapeHtml(revision.filename_revision)}</span></span>` : `<span class="cutting-big-button disabled-action">NC Filename Missing<span>Rescan customer folder</span></span>`}
               <a class="ghost-button cutting-big-button" href="#/dymolabels?job_id=${encodeURIComponent(jobItem.id)}">Print Dymo Labels<span>Part labels + edge arrows</span></a>
               <a class="ghost-button cutting-big-button" href="#/folderimport?job_id=${encodeURIComponent(jobItem.id)}">Rescan Customer Folder<span>Pick up remakes / changed files</span></a>
@@ -6165,6 +6172,11 @@ function assertJobFileAllowed(file) {
   }
   if (!JOB_FILE_ALLOWED_EXTENSIONS.has(extension)) {
     throw new Error("This file type is not approved for job-file storage.");
+  }
+  const mimeType = String(file.type || "").toLowerCase();
+  const allowedMimeTypes = JOB_FILE_MIME_BY_EXTENSION[extension] || [];
+  if (!mimeType || !allowedMimeTypes.includes(mimeType)) {
+    throw new Error("The file MIME type is missing or does not match the approved extension.");
   }
 }
 

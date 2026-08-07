@@ -99,8 +99,8 @@ grant usage on schema public to authenticated;
 grant select, insert, update on all tables in schema public to authenticated;
 revoke delete on all tables in schema public from authenticated;
 
--- The signed-URL Edge Function uses the server-only service_role to resolve
--- one job_files record before it asks the caller's RLS-scoped session to
--- authorise access. Keep this narrow; browsers never receive this role.
+-- The signed-URL Edge Function uses the server-only service_role only after
+-- the caller's RLS-scoped session has resolved and authorised one job_files
+-- record. Keep this narrow; browsers never receive this role.
 grant usage on schema public to service_role;
 grant select on public.job_files to service_role;

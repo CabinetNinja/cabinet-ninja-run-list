@@ -14,6 +14,13 @@ function validator() {
     JOB_FILE_MAX_BYTES: 50 * 1024 * 1024,
     JOB_FILE_ALLOWED_EXTENSIONS: new Set(["jpg", "jpeg", "png", "webp", "heic", "pdf", "txt", "csv", "doc", "docx", "xls", "xlsx", "dxf", "dwg"]),
     JOB_FILE_BLOCKED_EXTENSIONS: new Set(["exe", "com", "bat", "cmd", "msi", "ps1", "js", "mjs", "vbs", "jar", "sh", "zip", "rar", "7z", "html", "htm", "svg"]),
+    JOB_FILE_MIME_BY_EXTENSION: {
+      pdf: ["application/pdf"],
+      txt: ["text/plain"],
+      png: ["image/png"],
+      jpg: ["image/jpeg"],
+      jpeg: ["image/jpeg"],
+    },
     fileExtension: (name) => name.split(".").pop() || "",
   });
   vm.runInContext(appSource.slice(helperStart, helperEnd), context);
@@ -21,18 +28,24 @@ function validator() {
 }
 
 test("allows approved files inside the 50 MiB limit", () => {
-  assert.doesNotThrow(() => validator()({ name: "cut-sheet.pdf", size: 50 * 1024 * 1024 }));
+  assert.doesNotThrow(() => validator()({ name: "cut-sheet.pdf", type: "application/pdf", size: 50 * 1024 * 1024 }));
 });
 
 test("blocks executable, archive, and unknown job-file extensions", () => {
   const assertJobFileAllowed = validator();
-  assert.throws(() => assertJobFileAllowed({ name: "installer.exe", size: 1 }), /not allowed/);
-  assert.throws(() => assertJobFileAllowed({ name: "archive.zip", size: 1 }), /not allowed/);
-  assert.throws(() => assertJobFileAllowed({ name: "unknown.bin", size: 1 }), /not approved/);
+  assert.throws(() => assertJobFileAllowed({ name: "installer.exe", type: "application/octet-stream", size: 1 }), /not allowed/);
+  assert.throws(() => assertJobFileAllowed({ name: "archive.zip", type: "application/zip", size: 1 }), /not allowed/);
+  assert.throws(() => assertJobFileAllowed({ name: "unknown.bin", type: "application/octet-stream", size: 1 }), /not approved/);
 });
 
 test("blocks a file over the configured 50 MiB limit", () => {
-  assert.throws(() => validator()({ name: "large.pdf", size: 50 * 1024 * 1024 + 1 }), /50 MiB/);
+  assert.throws(() => validator()({ name: "large.pdf", type: "application/pdf", size: 50 * 1024 * 1024 + 1 }), /50 MiB/);
+});
+
+test("fails closed when MIME is missing or mismatched", () => {
+  const assertJobFileAllowed = validator();
+  assert.throws(() => assertJobFileAllowed({ name: "cut-sheet.pdf", size: 1 }), /MIME type/);
+  assert.throws(() => assertJobFileAllowed({ name: "cut-sheet.pdf", type: "text/plain", size: 1 }), /MIME type/);
 });
 
 test("blocks common executable headers even when an executable is renamed", async () => {
