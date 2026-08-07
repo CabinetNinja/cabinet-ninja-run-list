@@ -8,7 +8,7 @@ This runbook is review material only. It was not executed against production. Do
 - A separately verified database connection or SQL Editor session with permission to run migrations and the administrator recovery scripts.
 - The existing Auth UUID for Adam, supplied at execution time as ADAM_AUTH_USER_UUID. Do not place it in source, shell history, or a migration.
 - A normal application login for Adam after bootstrap. Connie's Auth UUID is optional and is assigned separately.
-- A tested encrypted backup/PITR restore point covering public schema, Storage metadata, and the job-files object inventory. Record backup ID, timestamp, retention, and restore owner in the change record.
+- A tested encrypted backup/PITR restore point covering public schema, Storage metadata, and the job-files object inventory. Record backup ID, timestamp, retention, and restore owner in the change record. Database dumps do not contain Storage file contents.
 - A supervised after-hours window and a named rollback operator. Customer access remains disabled.
 
 Required environment placeholders:
@@ -39,7 +39,7 @@ GO only when Adam accepts the preflight evidence.
 
 ## STOP 2 — backup confirmation
 
-Confirm the encrypted backup/PITR point, object inventory/hash evidence, and restore owner in the change record. The backup must predate any migration or bucket-policy command. If backup evidence is missing or cannot be restored, STOP.
+Confirm the encrypted backup/PITR point, object inventory/hash evidence, and restore owner in the change record. The protected Storage backup must include all 12 existing `.nc` files unchanged, at their exact production paths, with a SHA-256 hash recorded for each file; keep that backup outside Git and outside this repository. The backup must predate any migration or bucket-policy command. If backup evidence is missing or cannot be restored, STOP.
 
 ## Stage A — role foundation
 
@@ -94,13 +94,14 @@ If the command fails before the private bucket migration commits, stop and inves
 
 ## STOP 3 — supervised private Storage cutover
 
-Migration 202607240005 makes the existing job-files bucket private, sets the 50 MiB limit and exact MIME allow-list, and replaces the old Storage policies. It does not move, rename, download, or delete objects. Existing public URLs may stop working at commit, so the compatibility code and Edge Function must already be live.
+Migration 202607240005 makes the existing job-files bucket private, sets the 50 MiB limit and exact MIME allow-list, and replaces the old Storage policies. The allow-list includes `application/octet-stream` only for explicit `.nc` paths authorised to Owner/Admin or Workshop; generic octet-stream remains blocked. It does not move, rename, download, or delete objects. Existing public URLs may stop working at commit, so the compatibility code and Edge Function must already be live.
 
 Proceed only inside Adam's explicitly approved after-hours window. Before GO, verify:
 
 - A representative legacy job_files.storage_path and a new jobs/<job-id>/ path are known without exposing file contents.
 - The signed-URL function returns a fixed 900-second URL for Adam and denies an unassigned user.
-- A small approved PDF/image upload succeeds; executable headers, unsafe extensions, and generic octet-stream fail.
+- A small approved PDF/image upload succeeds; Owner/Admin and Workshop can upload a test `.nc`; Office, Install, and Read-only cannot read or upload `.nc`; executable headers, unsafe extensions, and generic octet-stream files with non-`.nc` extensions fail.
+- At least one existing `.nc` object opens through a 900-second signed URL without renaming or moving its legacy path.
 - The seven-year retention register and manual review owner are recorded.
 
 GO to commit 202607240005 only when Adam approves the cutover.
@@ -122,7 +123,7 @@ Application smoke tests:
 1. Adam signs in and opens the existing Office/Workshop flows.
 2. Existing jobs, CN-#### numbers, run-list items, checklists, and suppliers are visible and unchanged.
 3. Adam opens one legacy file path and one new private path through the signed-url control.
-4. A Workshop user opens an active job file and cannot access financial data.
+4. A Workshop user opens an active PDF and an existing `.nc` production file, while Office, Install, Read-only, and unassigned users are denied the `.nc` path and cannot access financial data.
 5. A Read-only user can view permitted metadata but cannot upload or modify.
 6. An unassigned authenticated user is denied business rows and files.
 7. No Customer, Jobs, Dashboard, or customer-portal interface is enabled by this change.

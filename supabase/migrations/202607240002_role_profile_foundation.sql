@@ -162,7 +162,27 @@ as $$
   select case
     when (storage.foldername(object_name))[1] = 'jobs'
       then (storage.foldername(object_name))[2]
+    when coalesce(array_length(storage.foldername(object_name), 1), 0) >= 1
+      then (storage.foldername(object_name))[1]
     else null
+  end;
+$$;
+
+-- File access is path- and role-aware. The production .nc files use the
+-- original <job-id>/<filename> path shape, while new uploads use
+-- jobs/<job-id>/<filename>; both remain valid without moving objects.
+create or replace function public.can_access_job_file_path(object_name text, write_access boolean default false)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, auth, storage, pg_temp
+as $$
+  select case
+    when lower(storage.extension(object_name)) = 'nc' then
+      public.has_cabinet_ninja_role(array['owner_admin', 'workshop']::public.cabinet_ninja_role[])
+      and public.can_access_job_files(public.job_id_from_storage_path(object_name), write_access)
+    else public.can_access_job_files(public.job_id_from_storage_path(object_name), write_access)
   end;
 $$;
 
@@ -173,7 +193,7 @@ stable
 security definer
 set search_path = public, auth, storage, pg_temp
 as $$
-  select public.can_access_job_files(public.job_id_from_storage_path(object_name), false);
+  select public.can_access_job_file_path(object_name, false);
 $$;
 
 create or replace function public.can_write_job_file_path(object_name text)
@@ -183,7 +203,7 @@ stable
 security definer
 set search_path = public, auth, storage, pg_temp
 as $$
-  select public.can_access_job_files(public.job_id_from_storage_path(object_name), true);
+  select public.can_access_job_file_path(object_name, true);
 $$;
 
 revoke all on function public.current_cabinet_ninja_role() from public;
@@ -192,6 +212,7 @@ revoke all on function public.is_owner_admin() from public;
 revoke all on function public.can_read_operational_data() from public;
 revoke all on function public.can_write_operational_data() from public;
 revoke all on function public.can_access_job_files(text, boolean) from public;
+revoke all on function public.can_access_job_file_path(text, boolean) from public;
 revoke all on function public.can_read_job_file_path(text) from public;
 revoke all on function public.can_write_job_file_path(text) from public;
 
@@ -201,6 +222,7 @@ grant execute on function public.is_owner_admin() to authenticated;
 grant execute on function public.can_read_operational_data() to authenticated;
 grant execute on function public.can_write_operational_data() to authenticated;
 grant execute on function public.can_access_job_files(text, boolean) to authenticated;
+grant execute on function public.can_access_job_file_path(text, boolean) to authenticated;
 grant execute on function public.can_read_job_file_path(text) to authenticated;
 grant execute on function public.can_write_job_file_path(text) to authenticated;
 

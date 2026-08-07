@@ -1,6 +1,7 @@
 param(
   [string]$SupabaseCli = "C:\Users\ADAMAN~1\AppData\Local\Temp\cabinet-ninja-phase-1a-supabase-cli\supabase.exe",
-  [string]$Container = "supabase_db_cabinet-ninja-phase-1a-audit"
+  [string]$Container = "supabase_db_cabinet-ninja-phase-1a-audit",
+  [switch]$SkipReset
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,8 +21,10 @@ function Sql([string]$Query) {
   return ($result -join "").Trim()
 }
 
-& $SupabaseCli db reset --local
-if ($LASTEXITCODE -ne 0) { throw "Could not reset local database." }
+if (-not $SkipReset) {
+  & $SupabaseCli db reset --local
+  if ($LASTEXITCODE -ne 0) { throw "Could not reset local database." }
+}
 
 $roleMigration = Copy-LocalFile "supabase\migrations\202607240002_role_profile_foundation.sql"
 $rlsMigration = Copy-LocalFile "supabase\migrations\202607240003_replace_unrestricted_rls.sql"

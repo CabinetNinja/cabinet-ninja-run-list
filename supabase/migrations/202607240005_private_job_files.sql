@@ -15,7 +15,9 @@ values (
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/vnd.ms-excel',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/dxf', 'application/acad', 'application/x-dwg'
+    'application/dxf', 'application/acad', 'application/x-dwg',
+    -- Generic octet-stream is admitted only for an explicit .nc path below.
+    'application/octet-stream'
   ]::text[]
 )
 on conflict (id) do update
@@ -40,4 +42,14 @@ on storage.objects for insert to authenticated
 with check (
   bucket_id = 'job-files'
   and public.can_write_job_file_path(name)
+  and (
+    (
+      lower(storage.extension(name)) = 'nc'
+      and lower(coalesce(metadata ->> 'mimetype', '')) = 'application/octet-stream'
+    )
+    or (
+      lower(storage.extension(name)) <> 'nc'
+      and lower(coalesce(metadata ->> 'mimetype', '')) <> 'application/octet-stream'
+    )
+  )
 );

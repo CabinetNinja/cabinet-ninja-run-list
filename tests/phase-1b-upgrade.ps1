@@ -1,6 +1,7 @@
 param(
   [string]$SupabaseCli = "C:\Users\ADAMAN~1\AppData\Local\Temp\cabinet-ninja-phase-1a-supabase-cli\supabase.exe",
-  [string]$Container = "supabase_db_cabinet-ninja-phase-1a-audit"
+  [string]$Container = "supabase_db_cabinet-ninja-phase-1a-audit",
+  [switch]$SkipReset
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,12 +22,14 @@ function Invoke-LocalMigration([string]$Name) {
   if ($LASTEXITCODE -ne 0) { throw "Could not apply local migration $Name." }
 }
 
-Push-Location $repoRoot
-try {
-  & $SupabaseCli db reset --local
-  if ($LASTEXITCODE -ne 0) { throw "Could not reset the local database." }
-} finally {
-  Pop-Location
+if (-not $SkipReset) {
+  Push-Location $repoRoot
+  try {
+    & $SupabaseCli db reset --local
+    if ($LASTEXITCODE -ne 0) { throw "Could not reset the local database." }
+  } finally {
+    Pop-Location
+  }
 }
 
 # Simulate existing production records before the Phase 1B migrations.
@@ -40,6 +43,9 @@ insert into public.leads (id, lead_number, lead_name, client_name, location, sta
 insert into public.items (id, item_name, supplier_id, job_id, status) values ('upgrade-item', 'Existing item', 'upgrade-supplier', 'upgrade-job', 'needed') on conflict (id) do nothing;
 insert into public.job_files (id, job_id, storage_path, file_kind, original_filename, internal_filename, file_hash, file_size, mime_type)
 values ('upgrade-file', 'upgrade-job', 'CN-8801/legacy-cut-sheet.pdf', 'pdf', 'legacy-cut-sheet.pdf', 'legacy-cut-sheet.pdf', 'upgrade-hash', 12, 'application/pdf')
+on conflict (id) do nothing;
+insert into public.job_files (id, job_id, storage_path, file_kind, original_filename, internal_filename, file_hash, file_size, mime_type)
+values ('upgrade-nc-file', 'upgrade-job', 'upgrade-job/CN-8801_S01.nc', 'nc', 'CN-8801_S01.nc', 'CN-8801_S01.nc', 'upgrade-nc-hash', 24, 'application/octet-stream')
 on conflict (id) do nothing;
 "@
 Invoke-LocalSql $setup | Out-Null
@@ -55,6 +61,8 @@ where j.id = 'upgrade-job';
 if ($before -ne "upgrade-job|CN-8801|upgrade-lead|CNL-8801|upgrade-item|upgrade-file|CN-8801/legacy-cut-sheet.pdf") {
   throw "Upgrade fixture did not have the expected production-shaped identity."
 }
+$ncBefore = Invoke-LocalSql "select storage_path || '|' || original_filename || '|' || file_hash from public.job_files where id = 'upgrade-nc-file';"
+if ($ncBefore -ne "upgrade-job/CN-8801_S01.nc|CN-8801_S01.nc|upgrade-nc-hash") { throw "Upgrade fixture did not have the expected legacy CNC file identity." }
 
 Invoke-LocalMigration "202607240002_role_profile_foundation.sql"
 Invoke-LocalSql "insert into public.staff_profiles (user_id, role, active, created_by, notes) values ('77777777-7777-7777-7777-777777777777', 'owner_admin', true, '77777777-7777-7777-7777-777777777777', 'Explicit local bootstrap fixture');" | Out-Null
@@ -75,6 +83,8 @@ join public.job_files f on f.id = 'upgrade-file'
 where j.id = 'upgrade-job';
 "@
 if ($after -ne $before) { throw "Upgrade changed an existing ID, number, or file path." }
+$ncAfter = Invoke-LocalSql "select storage_path || '|' || original_filename || '|' || file_hash from public.job_files where id = 'upgrade-nc-file';"
+if ($ncAfter -ne $ncBefore) { throw "Upgrade changed an existing CNC file path or hash metadata." }
 
 $staffCount = Invoke-LocalSql "select count(*) from public.staff_profiles;"
 if ($staffCount -ne "1") { throw "Unexpected staff profile count after explicit bootstrap." }

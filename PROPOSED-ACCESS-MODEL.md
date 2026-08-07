@@ -27,10 +27,14 @@ Do not use Supabase Auth roles alone as the business model. Phase 1B uses an app
 | Suppliers | Full | Create/read/update | Read; propose changes through workflow | No access by default | Read only |
 | Checklist templates | Full | Create/read/update | Read and complete job instances | Read and complete install job instances | Read only |
 | Job checklist instances | Full | Read; create planning checklists | Create/read/update workshop/QC sections | Create/read/update assigned install sections | Read only |
-| Files and photos | Full | Upload/read job commercial/admin files | Upload/read workshop files for active jobs | Upload/read assigned-job site photos/documents | Metadata/read only, no download by default |
+| Files and photos | Full, including CNC `.nc` | Upload/read normal commercial/admin files; no `.nc` by default | Upload/read workshop files for active jobs, including CNC `.nc` | Upload/read assigned-job site photos/documents; no `.nc` | Metadata only, no download |
 | Activity/audit history | Read all; exceptional correction through controlled tooling only | Append system-generated events; read relevant | Append system-generated events; read relevant | Append system-generated events; read relevant | Read only |
 
 Assignment-scoped access should use the explicit Phase 1B job_assignments table. It currently records responsibility, filtering, and notifications only: until assignment workflows are implemented, Workshop and Install receive active operational job access only, not customer-wide access.
+
+### CNC production-file exception
+
+The 12 existing `.nc` objects are legitimate Mozaik machine files. They are an explicit internal file type, not disposable references. Owner/Admin and Workshop may read, download, upload, and manage `.nc`; Office, Install, Read-only, unassigned, unauthenticated, and customer/external users cannot access them. The only use of `application/octet-stream` is an authenticated `.nc` upload by Owner/Admin or Workshop. A non-`.nc` octet-stream upload fails closed. Existing paths remain unchanged and are signed only after the caller's role and job path have been checked.
 
 ## Private job-file model
 

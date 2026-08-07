@@ -25,9 +25,9 @@ The verified production schema has no price, cost, margin, or payment columns. P
 
 New private paths use jobs/<job-id>/<opaque-file-name>. Existing production paths and public URLs are not renamed, deleted, or changed by these migrations. The signed-URL function accepts a job_files ID rather than a path, resolves its job server-side, checks the caller's role, and creates a fixed 15-minute URL with the service role held only in Edge Function environment variables. Browser-supplied expiry values are ignored. Both new paths and legacy paths stored in job_files.storage_path use this boundary after the bucket is private; legacy public URLs remain a fallback until cutover verification.
 
-The exact browser extension allow-list is .jpg, .jpeg, .png, .webp, .heic, .pdf, .txt, .csv, .doc, .docx, .xls, .xlsx, .dxf, and .dwg. The exact Storage MIME allow-list is image/jpeg, image/png, image/webp, image/heic, application/pdf, text/plain, text/csv, application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/dxf, application/acad, and application/x-dwg. Generic application/octet-stream is rejected.
+The exact browser extension allow-list is .jpg, .jpeg, .png, .webp, .heic, .pdf, .txt, .csv, .doc, .docx, .xls, .xlsx, .dxf, .dwg, and .nc. The exact Storage MIME allow-list is image/jpeg, image/png, image/webp, image/heic, application/pdf, text/plain, text/csv, application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/dxf, application/acad, application/x-dwg, and application/octet-stream. The octet-stream entry is an explicit exception for .nc only; generic octet-stream files with any other extension are rejected.
 
-.nc, .cnc, .tap, and .gcode are folder-scan references only; the current workflow stores their filename/version metadata and does not upload or execute their contents. STEP/STP, IGES/IGS, STL, OBJ, SVG, ZIP/RAR/7Z, HTML, scripts, and executables are not supported. Renaming a common PE, ELF, Mach-O, or shebang script to an allowed extension is rejected by content-signature checks as well as extension/MIME checks. These checks are not antivirus scanning; any new Cabinet Ninja/Mozaik format requires Adam's explicit review.
+.nc is an explicit internal Mozaik CNC production-file type. Owner/Admin and Workshop may read, download, upload, and manage .nc files; Office, Install, and Read-only cannot access them; unauthenticated, unassigned, and customer/external callers are denied. Existing production .nc paths retain their original <job-id>/<filename> shape and are resolved through the same authenticated signed-URL boundary. .cnc, .tap, and .gcode remain folder-scan references only. STEP/STP, IGES/IGS, STL, OBJ, SVG, ZIP/RAR/7Z, HTML, scripts, and executables are not supported. Renaming a common PE, ELF, Mach-O, or shebang script to an allowed extension is rejected by content-signature checks as well as extension/MIME checks. These checks are not antivirus scanning; any new Cabinet Ninja/Mozaik format requires Adam's explicit review.
 
 Retention is at least seven years after job completion, followed by manual Owner/Admin review. No automatic deletion is implemented.
 
@@ -47,16 +47,16 @@ supabase/config.toml deliberately disables automatic local migration application
 
 Verified locally:
 
-- 26 database and Storage policy checks passed.
-- Edge Function checks passed: no token returns 401; an unassigned authenticated user returns 403; an authorised Workshop user receives a fixed 900-second (15-minute) URL even when the browser supplies expiresIn: 999999.
+- 40 database and Storage policy checks passed, including normal PDFs/office files, generic-octet rejection, executable-header rejection, and .nc read/upload rules for Owner/Admin, Workshop, Office, Install, Read-only, and unassigned users.
+- Edge Function checks include no-token 401, unassigned/Office/Install/Read-only .nc denial, Workshop and Owner/Admin .nc signed URLs, unchanged legacy paths, and a fixed 900-second (15-minute) URL even when the browser supplies expiresIn: 999999.
 - Bootstrap/recovery checks passed: restrictive RLS stops before policy removal without an Owner/Admin; valid explicit UUID bootstrap succeeds; invalid UUID bootstrap exits nonzero without a role row; administrator recovery restores the emergency path.
 - Storage rollback script passed locally: explicit confirmation restored the public flag and legacy policies without moving or deleting objects.
 - Upgrade checks passed: existing IDs, CN-####/CNL-#### numbers, file metadata, and paths were preserved; no unassigned roles were created; seven fields and three indexes were created once; safe reruns left two intended Storage policies and a private 50 MiB bucket.
-- Node regression suite: 17 passed, 0 failed.
+- Node regression suite: 19 passed, 0 failed.
 - Existing Vitest login-containment check: 1 passed, 0 failed.
 
 ## Approved decisions and remaining gates
 
 Adam is assigned owner_admin. Connie may receive office separately once her Auth UUID exists. Workshop and Install see active jobs, while assignments control responsibility, filtering, and notifications. Workshop, Install, and Read-only do not access financial information. Normal users archive; only Owner/Admin may permanently delete through an explicitly confirmed administrative process. Job files become private, retention is at least seven years with manual review and no automatic deletion, customer access remains out of scope, and the Storage cutover requires Adam's supervised after-hours approval.
 
-Remaining gates are the exact backup evidence, file inventory/hash verification, after-hours owner, and explicit final GO for the private-bucket cutover.
+Remaining gates are a protected backup of all 12 existing .nc files with exact paths and SHA-256 hashes (the database dump contains metadata only), file inventory/hash verification, after-hours owner, and explicit final GO for the private-bucket cutover.

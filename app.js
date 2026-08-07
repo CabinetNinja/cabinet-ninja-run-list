@@ -52,7 +52,7 @@ const TRACKING_NUMBER_PAD = 4;
 const CNC_FILE_EXTENSIONS = new Set(["nc", "cnc", "tap", "gcode"]);
 const JOB_FILE_MAX_BYTES = 50 * 1024 * 1024;
 const JOB_FILE_PRIVATE_PREFIX = "jobs";
-const JOB_FILE_ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "heic", "pdf", "txt", "csv", "doc", "docx", "xls", "xlsx", "dxf", "dwg"]);
+const JOB_FILE_ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "heic", "pdf", "txt", "csv", "doc", "docx", "xls", "xlsx", "dxf", "dwg", "nc"]);
 const JOB_FILE_BLOCKED_EXTENSIONS = new Set(["exe", "com", "bat", "cmd", "msi", "ps1", "js", "mjs", "vbs", "jar", "sh", "zip", "rar", "7z", "html", "htm", "svg"]);
 const JOB_FILE_MIME_BY_EXTENSION = {
   jpg: ["image/jpeg"], jpeg: ["image/jpeg"], png: ["image/png"], webp: ["image/webp"], heic: ["image/heic"],
@@ -60,6 +60,7 @@ const JOB_FILE_MIME_BY_EXTENSION = {
   docx: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"], xls: ["application/vnd.ms-excel"],
   xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"], dxf: ["application/dxf", "application/acad"],
   dwg: ["application/x-dwg", "application/acad"],
+  nc: ["application/octet-stream"],
 };
 const CUT_PATTERN_STATUS_OPTIONS = [
   ["files_incomplete", "Files incomplete"],
@@ -3797,7 +3798,7 @@ function renderCuttingModeScreen(revisionId) {
             </div>
             <div class="cutting-big-actions">
               ${pdf ? (pdf.storage_path && dataStore?.getSignedJobFileUrl ? `<button class="primary-action cutting-big-button" type="button" data-open-job-file="${escapeAttr(pdf.id)}">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></button>` : pdf.file_url ? `<a class="primary-action cutting-big-button" href="${escapeAttr(pdf.file_url)}" target="_blank" rel="noreferrer">Open Cut-Sheet PDF<span>${escapeHtml(pdf.original_filename)}</span></a>` : `<span class="cutting-big-button disabled-action">PDF Unavailable<span>Rescan customer folder</span></span>`) : `<span class="cutting-big-button disabled-action">PDF Missing<span>Rescan customer folder</span></span>`}
-              ${nc ? `<span class="cutting-big-button nc-reference">NC Filename Checked<span>${escapeHtml(nc.original_filename)} - ${escapeHtml(revision.filename_revision)}</span></span>` : `<span class="cutting-big-button disabled-action">NC Filename Missing<span>Rescan customer folder</span></span>`}
+              ${nc ? (jobFileHasPrivatePath(nc) && dataStore?.getSignedJobFileUrl ? jobFileOpenControl(nc, "Open NC production file") : `<span class="cutting-big-button nc-reference">NC Filename Checked<span>${escapeHtml(nc.original_filename)} - ${escapeHtml(revision.filename_revision)}</span></span>`) : `<span class="cutting-big-button disabled-action">NC Filename Missing<span>Rescan customer folder</span></span>`}
               <a class="ghost-button cutting-big-button" href="#/dymolabels?job_id=${encodeURIComponent(jobItem.id)}">Print Dymo Labels<span>Part labels + edge arrows</span></a>
               <a class="ghost-button cutting-big-button" href="#/folderimport?job_id=${encodeURIComponent(jobItem.id)}">Rescan Customer Folder<span>Pick up remakes / changed files</span></a>
             </div>
@@ -3924,7 +3925,7 @@ function renderCutImportForm(params = {}) {
       ${textareaField("Import notes", "revision_notes", "", "full")}
       <section class="warning-panel full">
         <strong>Versions:</strong> Add the revised cut-sheet PDF and select the matching NC files. Run List reads each NC filename and revision, but does not upload, store, open, or alter NC file contents. If a filename/version changes, it creates a review item.<br><br>
-        <strong>Safety:</strong> Run List stores the PDF reference and NC filename/version checks only. CNC software remains responsible for opening and running NC files.
+        <strong>Safety:</strong> Run List stores the cut-sheet PDF and authorised `.nc` production file. CNC software remains responsible for opening and running NC files; `.cnc`, `.tap`, and `.gcode` remain filename/version references.
       </section>
       <div class="form-actions full">
         <button class="primary-action" type="submit">Import files</button>
@@ -4242,7 +4243,7 @@ async function openJobFile(fileId) {
   const file = jobFileById(fileId);
   if (!file) return toast("File not found.");
   try {
-    if (file.storage_path && dataStore?.getSignedJobFileUrl) {
+    if (jobFileHasPrivatePath(file) && dataStore?.getSignedJobFileUrl) {
       window.open(await dataStore.getSignedJobFileUrl(file.id), "_blank", "noopener,noreferrer");
       return;
     }
@@ -4256,9 +4257,16 @@ async function openJobFile(fileId) {
   }
 }
 
+function jobFileHasPrivatePath(file) {
+  return Boolean(file?.storage_path || (!file?.file_url &&
+    file?.file_kind === "nc" && file?.job_id && file?.internal_filename &&
+    !String(file.internal_filename).includes("/") && !String(file.internal_filename).includes("\\")
+  ));
+}
+
 function jobFileOpenControl(file, label = "Open file") {
   if (!file) return '<span class="status-pill warning">File missing</span>';
-  if (file.storage_path && dataStore?.getSignedJobFileUrl) {
+  if (jobFileHasPrivatePath(file) && dataStore?.getSignedJobFileUrl) {
     return `<button class="ghost-button" type="button" data-open-job-file="${escapeAttr(file.id)}">${escapeHtml(label)}</button>`;
   }
   if (file.file_url) {
@@ -4278,7 +4286,7 @@ async function fileFromStoredJobPdf(file) {
       // Private buckets may expose a URL that cannot be fetched without an authenticated download.
     }
   }
-  if (!blob && file.storage_path && file.id && dataStore?.getSignedJobFileUrl) {
+  if (!blob && jobFileHasPrivatePath(file) && file.id && dataStore?.getSignedJobFileUrl) {
     try {
       const signedUrl = await dataStore.getSignedJobFileUrl(file.id);
       const response = await fetch(signedUrl);
@@ -6106,7 +6114,8 @@ function fileToDataUrl(file) {
 }
 
 async function storeWorkshopFile(jobItem, file, parsed) {
-  const referenceOnly = parsed.file_kind === "nc";
+  const isNcProduction = fileExtension(file.name).toLowerCase() === "nc";
+  const referenceOnly = parsed.file_kind === "nc" && !isNcProduction;
   if (!referenceOnly) {
     assertJobFileAllowed(file);
     await assertJobFileContentAllowed(file);
@@ -6154,13 +6163,14 @@ async function storeWorkshopFile(jobItem, file, parsed) {
     internal_filename: internalName,
     file_hash: hash,
     file_size: file.size,
-    mime_type: file.type || (parsed.file_kind === "pdf" ? "application/pdf" : null),
-    source: referenceOnly ? "folder_scan_reference" : "manual_upload",
-    notes: referenceOnly ? `Filename/version reference only. Source: ${relativePath}. Last modified: ${new Date(file.lastModified).toLocaleString()}.` : "",
+    mime_type: file.type || (parsed.file_kind === "nc" ? "application/octet-stream" : parsed.file_kind === "pdf" ? "application/pdf" : null),
+    source: referenceOnly ? "folder_scan_reference" : parsed.file_kind === "nc" ? "folder_scan_production_file" : "manual_upload",
+    notes: referenceOnly ? `Filename/version reference only. Source: ${relativePath}. Last modified: ${new Date(file.lastModified).toLocaleString()}.` : parsed.file_kind === "nc" ? `Mozaik CNC production file. Source: ${relativePath}.` : "",
   });
   state.job_files.unshift(record);
   return record;
 }
+
 
 function assertJobFileAllowed(file) {
   if (file.size > JOB_FILE_MAX_BYTES) {

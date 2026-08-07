@@ -65,7 +65,7 @@ Run `supabase-lead-number-migration.sql` once to store automatic `CNL-####` lead
 
 Run `supabase-dashboard-migration.sql` once on existing projects to add next-action and target install date fields used by the dashboard.
 
-Run `supabase-workshop-cnc-migration.sql` once on existing projects to add the Workshop/CNC cut pattern, file import, physical run, remake, and activity-history tables. It also creates a public Supabase Storage bucket named `job-files` for uploaded Mozaik PDFs and NC/CNC/TAP/GCODE files.
+Run `supabase-workshop-cnc-migration.sql` once on existing projects to add the Workshop/CNC cut pattern, file import, physical run, remake, and activity-history tables. It also creates the current public Supabase Storage bucket named `job-files` for uploaded Mozaik PDFs and CNC files. Under the reviewed Phase 1B target, `.nc` is an explicit internal production-file type for Owner/Admin and Workshop; `.cnc`, `.tap`, and `.gcode` remain filename/version references, and the bucket is made private only during the separately approved cutover.
 
 ## Security foundation (not deployed)
 
