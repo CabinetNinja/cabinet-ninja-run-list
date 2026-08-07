@@ -59,7 +59,9 @@ Deno.serve(async (request) => {
   if (permissionError) return response({ error: "Could not verify file access" }, 500);
   if (permitted !== true) return response({ error: "Not authorised for this file" }, 403);
 
-  const expiresIn = 60;
+  // Keep this fixed server-side. The browser supplies only a job_files ID and
+  // cannot extend the lifetime of the signed URL.
+  const expiresIn = 15 * 60;
   const { data: signed, error: signedError } = await admin.storage
     .from("job-files")
     .createSignedUrl(file.storage_path, expiresIn);

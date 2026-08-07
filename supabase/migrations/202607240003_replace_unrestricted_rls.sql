@@ -2,6 +2,19 @@
 -- No DELETE policy is created: client-side deletion is intentionally disabled.
 
 do $$
+begin
+  if not exists (
+    select 1
+    from public.staff_profiles
+    where role = 'owner_admin'
+      and active = true
+  ) then
+    raise exception 'STOP: bootstrap an approved active Owner/Admin before restrictive RLS replacement';
+  end if;
+end;
+$$;
+
+do $$
 declare
   entity text;
 begin

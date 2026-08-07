@@ -4235,7 +4235,7 @@ async function openJobFile(fileId) {
   const file = jobFileById(fileId);
   if (!file) return toast("File not found.");
   try {
-    if (file.storage_path?.startsWith(`${JOB_FILE_PRIVATE_PREFIX}/`) && dataStore?.getSignedJobFileUrl) {
+    if (file.storage_path && dataStore?.getSignedJobFileUrl) {
       window.open(await dataStore.getSignedJobFileUrl(file.id), "_blank", "noopener,noreferrer");
       return;
     }
@@ -4251,7 +4251,7 @@ async function openJobFile(fileId) {
 
 function jobFileOpenControl(file, label = "Open file") {
   if (!file) return '<span class="status-pill warning">File missing</span>';
-  if (file.storage_path?.startsWith(`${JOB_FILE_PRIVATE_PREFIX}/`)) {
+  if (file.storage_path && dataStore?.getSignedJobFileUrl) {
     return `<button class="ghost-button" type="button" data-open-job-file="${escapeAttr(file.id)}">${escapeHtml(label)}</button>`;
   }
   if (file.file_url) {
@@ -4269,6 +4269,16 @@ async function fileFromStoredJobPdf(file) {
       if (response.ok) blob = await response.blob();
     } catch {
       // Private buckets may expose a URL that cannot be fetched without an authenticated download.
+    }
+  }
+  if (!blob && file.storage_path && file.id && dataStore?.getSignedJobFileUrl) {
+    try {
+      const signedUrl = await dataStore.getSignedJobFileUrl(file.id);
+      const response = await fetch(signedUrl);
+      if (response.ok) blob = await response.blob();
+    } catch {
+      // The legacy public URL and authenticated Storage download remain
+      // compatibility fallbacks during the supervised bucket cutover.
     }
   }
   if (!blob && file.storage_path && dataStore?.downloadJobFile) {
@@ -6090,7 +6100,10 @@ function fileToDataUrl(file) {
 
 async function storeWorkshopFile(jobItem, file, parsed) {
   const referenceOnly = parsed.file_kind === "nc";
-  if (!referenceOnly) assertJobFileAllowed(file);
+  if (!referenceOnly) {
+    assertJobFileAllowed(file);
+    await assertJobFileContentAllowed(file);
+  }
   const relativePath = relativePathForCustomerFile(file);
   const hash = referenceOnly ? `reference:${file.size}:${file.lastModified}:${relativePath}` : await hashFile(file);
   const existing = state.job_files.find((item) =>
@@ -6152,6 +6165,18 @@ function assertJobFileAllowed(file) {
   }
   if (!JOB_FILE_ALLOWED_EXTENSIONS.has(extension)) {
     throw new Error("This file type is not approved for job-file storage.");
+  }
+}
+
+async function assertJobFileContentAllowed(file) {
+  if (!file?.slice) return;
+  const bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  const signature = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const startsWithShebang = bytes[0] === 0x23 && bytes[1] === 0x21;
+  const executableHeader = signature.startsWith("4d5a") || signature.startsWith("7f454c46") ||
+    ["feedface", "feedfacf", "cefaedfe", "cffaedfe"].some((magic) => signature.startsWith(magic));
+  if (startsWithShebang || executableHeader) {
+    throw new Error("The file contents look like an executable or script and are not allowed.");
   }
 }
 

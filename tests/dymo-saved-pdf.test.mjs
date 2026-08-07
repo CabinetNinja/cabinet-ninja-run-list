@@ -55,3 +55,18 @@ test("loads a saved PDF from private job storage when no public URL is present",
   assert.equal(file.name, "Cabinet labels.pdf");
   assert.equal(file.type, "application/pdf");
 });
+
+test("private and legacy storage paths use the signed-url boundary when available", async () => {
+  const opened = [];
+  const context = vm.createContext({
+    JOB_FILE_PRIVATE_PREFIX: "jobs",
+    dataStore: { getSignedJobFileUrl: async (id) => "https://signed.example/" + id },
+    jobFileById: (id) => ({ id, storage_path: id === "legacy" ? "CN-0001/cut-sheet.pdf" : "jobs/job-1/cut-sheet.pdf" }),
+    window: { open: (url) => opened.push(url) },
+  });
+  vm.runInContext(appSource.slice(helperStart, helperEnd), context);
+
+  await context.openJobFile("legacy");
+  await context.openJobFile("private");
+  assert.deepEqual(opened, ["https://signed.example/legacy", "https://signed.example/private"]);
+});

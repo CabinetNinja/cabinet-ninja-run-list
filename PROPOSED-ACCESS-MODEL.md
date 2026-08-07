@@ -2,7 +2,7 @@
 
 ## Status and intent
 
-This is a proposal only. It makes no production change and does not enable customer access. The current production model gives every authenticated user unrestricted read/write access to all business rows and uses a public job-files bucket. The target model is internal-first, least-privilege, and compatible with the existing PWA while the application is refactored.
+This document describes the approved Phase 1B internal direction and the remaining implementation details. It makes no production change and does not enable customer access. Adam is the intended owner_admin; Connie may receive office separately once her Auth UUID exists. The current production model gives every authenticated user unrestricted read/write access to all business rows and uses a public job-files bucket. The target model is internal-first, least-privilege, and compatible with the existing PWA while the application is refactored.
 
 ## Recommended internal roles
 
@@ -65,6 +65,6 @@ Use a customer_portal_memberships table tied to a customer/contact identity and 
 3. Whether Office may modify production/CNC fields and whether Workshop may modify supplier/run-list purchasing fields.
 4. The authority that may delete jobs, records, and files; recommended default is Owner/Admin only, with soft-delete/retention where practical.
 5. File categories, retention periods, maximum size/MIME limits, and whether CNC/NC files receive stricter handling than photos/PDFs.
-6. The private-bucket migration window, backup/restore verification standard, and public-file retirement date.
+6. The private-bucket migration window, backup/restore verification standard, and public-file retirement date. Approved constraints are a supervised after-hours cutover, at least seven years retention after job completion, and manual Owner/Admin review with no automatic deletion.
 7. Whether a server/Edge Function boundary is approved for signed URLs and audit events. This is recommended before any private-file cutover.
-8. The future customer portal scope, invitation owner, approved content classes, and the explicit decision not to enable it in the current phase.
+8. The future customer portal scope, invitation owner, approved content classes, and the explicit decision not to enable it in the current phase. Customer access remains out of scope for Phase 1B.

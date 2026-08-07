@@ -39,6 +39,13 @@ try {
 }
 
 Invoke-LocalMigration "202607240002_role_profile_foundation.sql"
+Invoke-LocalSql @"
+insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+values ('00000000-0000-0000-0000-000000000000', '11111111-1111-1111-1111-111111111111', 'authenticated', 'authenticated', 'owner-bootstrap@test.invalid', 'not-used', now(), '{}', '{}', now(), now())
+on conflict (id) do nothing;
+insert into public.staff_profiles (user_id, role, active, created_by, notes)
+values ('11111111-1111-1111-1111-111111111111', 'owner_admin', true, '11111111-1111-1111-1111-111111111111', 'Local bootstrap fixture');
+"@ | Out-Null
 Invoke-LocalMigration "202607240003_replace_unrestricted_rls.sql"
 
 $before = Invoke-LocalSql @"

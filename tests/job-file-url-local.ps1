@@ -64,13 +64,13 @@ try {
   $denied = Invoke-LocalHttp $functionUrl "POST" '{"fileId":"phase-1b-job-file"}' $anonKey $unassignedSession.access_token
   if ($denied.Status -ne 403) { throw "Unassigned user did not receive 403 (received $($denied.Status): $($denied.Body))." }
 
-  $authorised = Invoke-LocalHttp $functionUrl "POST" '{"fileId":"phase-1b-job-file"}' $anonKey $workshopSession.access_token
+  $authorised = Invoke-LocalHttp $functionUrl "POST" '{"fileId":"phase-1b-job-file","expiresIn":999999}' $anonKey $workshopSession.access_token
   if ($authorised.Status -ne 200) { throw "Authorised Workshop request did not receive 200." }
   $payload = $authorised.Body | ConvertFrom-Json
-  if ($payload.expiresIn -ne 60 -or -not $payload.url) { throw "Signed URL response did not have a 60-second expiry and URL." }
+  if ($payload.expiresIn -ne 900 -or -not $payload.url) { throw "Signed URL response did not have a fixed 15-minute expiry and URL." }
 } finally {
   $cleanupSql = "delete from public.staff_profiles where user_id in ('$workshopId', '$unassignedId'); delete from auth.users where id in ('$workshopId', '$unassignedId');"
   & docker exec $Container psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres -c $cleanupSql 2>$null
 }
 
-Write-Output "Local Edge Function authorisation and 60-second signed-URL checks passed."
+Write-Output "Local Edge Function authorisation and fixed 15-minute signed-URL checks passed."
