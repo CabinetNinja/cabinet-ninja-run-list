@@ -2,11 +2,11 @@
 
 ## Scope and safety
 
-Preflight date: 2026-08-07. This report is read-only preparation only. No production migration, Auth change, RLS change, Storage change, Edge Function deployment, invitation, or email was performed. Approved database dumps were taken; no Storage file contents were read.
+Preflight date: 2026-08-12. This report is read-only release evidence only. No production migration, Auth change, RLS change, Storage change, Edge Function deployment, invitation, or email was performed. Approved database dumps and a protected read-only Storage backup were taken.
 
 Repository: `CabinetNinja/cabinet-ninja-run-list`
 Branch: `phase-1b-security-foundation`
-Reviewed commit: `4bd05b00dc76e4302666d7d9925b6b04dbba800f`
+Reviewed commit: `37301e3065339872ee7db70ee2fe39666a763c36` (`37301e3`)
 Expected base: `origin/main` at `3586f196108c707b241b6ef30f88510d69afc0c3`
 
 ## Confirmed facts
@@ -15,7 +15,7 @@ Expected base: `origin/main` at `3586f196108c707b241b6ef30f88510d69afc0c3`
 
 - Supabase CLI project enumeration confirms project `xoyzmjbjbaknvgtoofar`, named `cabinet-ninja-run-list`, region `ap-northeast-2`, PostgreSQL 17.6, status `ACTIVE_HEALTHY`.
 - The local Supabase project is linked to `xoyzmjbjbaknvgtoofar` for read-only CLI operations. The repository's local test project ID remains unchanged.
-- `origin/main` remains `3586f196`; the reviewed branch remains at `70d0f4b`.
+- `origin/main` remains `3586f196`; before this evidence-only publication, the remote Phase 1B branch was at `70d0f4b` and the local reviewed branch is at `37301e3`.
 
 ### Remote functions and customer access
 
@@ -23,6 +23,14 @@ Expected base: `origin/main` at `3586f196108c707b241b6ef30f88510d69afc0c3`
 - The only listed project secret is recorded by name only; its value was not read or retained.
 - Source and the Phase 1A baseline contain no customer portal tables, memberships, customer policies, customer invitations, or customer-facing access flags. Customer access remains disabled and out of scope.
 - No invitation or email command was run. No invitation or email will be sent during this preflight.
+
+### Auth inventory and restoration ownership
+
+- Existing Auth inventory: one user, `info@cabinetninja.co.nz`.
+- Adam confirmed that this is the intended Owner/Admin account.
+- No other current internal users are assigned or approved.
+- Adam is the restoration owner.
+- Adam's Auth UUID is intentionally not written into this repository or report.
 
 ### Current read-only production evidence
 
@@ -36,16 +44,19 @@ The 2026-08-07 linked dumps and migration listing confirm:
 
 The complete raw evidence is untracked under `preflight-evidence/2026-08-07-manual-backup/`.
 
-## Blocked checks
+## Release evidence completed
 
-The following checks remain blocked:
+- The requested Phase 1B file-security implementation is unchanged at local commit `37301e3065339872ee7db70ee2fe39666a763c36`; no Phase 1B coding was performed for this evidence pass.
+- `.nc` policy: Owner/Admin may read, download, upload and manage; Workshop may read, download and upload; Office, Install, Read-only, unassigned, unauthenticated, and customer/external callers are denied. Generic `application/octet-stream` remains blocked except for an explicit `.nc` path with an authorised Owner/Admin or Workshop role.
+- Existing legacy object paths remain unchanged and compatible with the future private-bucket signed-URL path. No production object was moved, renamed, deleted, or overwritten.
+- The protected backup was taken read-only through the authenticated Storage API endpoint, not a public URL, and is outside the Git repository at `C:\Users\Adam Ants\Documents\CabinetNinja\Phase1B-Storage-Backup-20260812`.
+- Protected backup inventory: 20 objects total, 12 `.nc` files, eight PDFs, and `8,356,206` total bytes.
+- Every downloaded object matched its previously recorded content length and response ETag. All 12 `.nc` files are present at their exact bucket-relative paths.
+- SHA-256 manifest: `F690F1D0D95D1E1CA563F2ACA6C2817CBC2BA7DEA071CD9A7AA14B3670A79681`.
+- The backup directory and manifest are EFS-encrypted with AES-256 for Adam's Windows account. No credentials, tokens, Auth UUIDs, or backup archive were committed.
+- A non-production restore/read rehearsal passed for one `.nc` file (`48,595` bytes) and one PDF (`694,355` bytes), with byte-for-byte SHA-256 matches.
 
-1. Auth-user inventory, the exact existing Auth UUID intended for Adam, and confirmation of all legitimate internal users.
-2. Identification of old/test Auth accounts that must remain unassigned.
-3. Backup/PITR plan status, last restorable point, retention, and named restoration owner.
-4. A protected file backup of all 20 Storage objects, with every `.nc` copied unchanged at its exact path and a SHA-256 content hash recorded; database dumps contain metadata only, not file contents.
-
-No UUID, password, database URL, customer data, file metadata, or secret value is present in this report.
+No UUID, password, database URL, customer data, or secret value is present in this report.
 
 ## Manual backup evidence
 
@@ -59,28 +70,35 @@ The linked project was verified as `xoyzmjbjbaknvgtoofar` and the remote migrati
 
 The public schema/data dump restored successfully into a disposable local PostgreSQL database, which was dropped after verification. The restore contained 20 public tables, 11 jobs with six `CN-####` values (`CN-0042` through `CN-0047`), six leads with two `CNL-####` values (`CNL-0048` through `CNL-0049`), 35 cut patterns, 396 revisions, one job-file metadata row, and a representative `CN-0044` record. Full restore evidence is in `preflight-evidence/2026-08-07-manual-backup/restore-test-results.txt`.
 
-Storage metadata confirms 20 `job-files` objects: 12 legitimate `.nc` production files with `application/octet-stream`, eight PDFs, and 8,356,206 bytes total (approximately 8.36 MB). The bucket is currently public; authenticated users can list/read all job files and upload to the bucket. Database dumps do not back up file contents. The protected backup procedure must copy all 12 `.nc` files unchanged, preserve exact paths, and record content SHA-256 hashes; that separate file-backup decision remains outstanding.
+Storage metadata confirms 20 `job-files` objects: 12 legitimate `.nc` production files with `application/octet-stream`, eight PDFs, and 8,356,206 bytes total (approximately 8.36 MB). The bucket is currently public; authenticated users can list/read all job files and upload to the bucket. Database dumps do not back up file contents. The separate protected file backup below preserves all 20 objects, including all 12 `.nc` files, at their exact paths with content SHA-256 hashes.
 
-The project plan/PITR capability is not exposed by the CLI project listing, and no PITR restore point was available in this read-only context. Operationally treat this as **Free-plan/no-PITR until Adam verifies otherwise**; the manual dump is the only verified database recovery artifact. A named restoration owner and restore rehearsal approval are still required.
+The project plan/PITR capability is not exposed by the CLI project listing, and no PITR restore point was available in this read-only context. Operationally treat this as **Free-plan/no-PITR until Adam verifies otherwise**. The manual database dump and isolated local PostgreSQL restore are verified, Adam is the named restoration owner, and the protected Storage file restore/read rehearsal is complete. No PITR restore point is claimed.
 
-The protected Storage procedure is documented in `PHASE-1B-STORAGE-BACKUP-PROCEDURE.md`. It requires a separate access-controlled file backup of all 12 `.nc` objects, preserving exact paths and recording content SHA-256 hashes. No `.nc` contents were downloaded in this preflight, so no content hashes are claimed here.
+The protected Storage procedure is documented in `PHASE-1B-STORAGE-BACKUP-PROCEDURE.md`. The separate protected backup is now complete: all 20 objects were downloaded read-only through the authenticated Storage API endpoint, preserving exact paths; all 12 `.nc` files and eight PDFs matched their recorded byte lengths and response ETags; and the protected manifest records SHA-256 hashes for every object. The manifest hash is `F690F1D0D95D1E1CA563F2ACA6C2817CBC2BA7DEA071CD9A7AA14B3670A79681`. A local restore/read rehearsal for one `.nc` and one PDF passed byte-for-byte.
 
-## Required Adam decisions and credentials
+The project remains operationally treated as **Free-plan/no-PITR**: the manual database dump and isolated local PostgreSQL restore are the verified database recovery evidence. The protected Storage backup and local file restore/read rehearsal are now also verified. No PITR restore point was claimed.
 
-Adam must provide or approve these out of band at execution time; none belong in source control or shell history:
+## Release validation
 
-- The exact existing Auth UUID for Adam's `owner_admin` bootstrap.
-- The named internal users and their roles. Current documented intent is Adam as Owner/Admin and Connie as a possible Office user once her real Auth UUID is verified; Workshop, Install, and Read-only users remain unassigned until approved.
-- Treatment of any additional legitimate staff, contractor, or test accounts.
-- The backup/PITR evidence standard, named restoration owner, and restore rehearsal evidence.
-- The after-hours Storage cutover window and rollback operator.
-- Final approval of the role permissions, assignment scope, seven-year file retention/manual review rule, and customer-access exclusion.
+- Full local Phase 1B runner passed: migrations `202607240002` through `202607240005`, 40 permission checks, and local Edge Function authorisation/fixed 15-minute signed-URL checks.
+- Bootstrap lockout-prevention suite passed: pre-bootstrap STOP, valid Owner/Admin verification, invalid UUID rejection, and administrator recovery.
+- Upgrade/idempotency suite passed: existing identities, data, IDs, numbers, and legacy CNC paths preserved; no roles auto-assigned; repeatable migrations stable.
+- JavaScript syntax check passed; Node regression suite passed 19/19 tests; Vitest login-containment check passed 1/1 test.
+
+## Remaining Adam decisions and credentials
+
+The following remain required before any production migration or deployment; none belong in source control or shell history:
+
+- Confirm whether the Free-plan/no-PITR assumption is acceptable or provide separately verified PITR/backup-plan evidence.
+- Approve the after-hours private Storage cutover window and rollback operator.
+- Give final GO approval for the reviewed role permissions, assignment scope, retention/manual-review rule, and customer-access exclusion.
+- Approve the staged production deployment order only after the compatible application and Edge Function release path has been independently verified.
 
 ## Exact STOP/GO points
 
 ### STOP — current preflight
 
-STOP. Do not apply any migration. The database backup and isolated restore are complete, but Auth identity/bootstrap, PITR/restore ownership, and protected Storage-file backup decisions remain unresolved.
+STOP. Do not apply any migration. Read-only release evidence is complete, but production cutover approval, after-hours timing, and the Free-plan/no-PITR decision remain unresolved.
 
 ### GO gate before any schema work
 
@@ -131,8 +149,8 @@ The current PWA can remain usable through the staged order only if the compatibl
 
 ## Updated recommendation after manual backup
 
-**NO-GO — preflight remains incomplete.** The manual database backup and isolated schema/data restore succeeded, but PITR/plan status, Auth-user/Adam UUID verification, named restoration owner, and separate protected Storage file backup remain unresolved. Obtain Adam's explicit decisions and complete every blocked check before any migration or deployment decision.
+**NO-GO — release evidence is complete, but production preflight remains approval-gated.** The manual database backup and isolated schema/data restore succeeded. The protected 20-object Storage backup, all 12 `.nc` hashes, EFS protection, and one-file `.nc`/PDF restore rehearsal also succeeded. Do not migrate or deploy until Adam resolves the Free-plan/no-PITR decision, approves the after-hours cutover window and rollback operator, and gives final production GO approval.
 
 ## Final recommendation
 
-**NO-GO — preflight remains incomplete.** The manual database backup and isolated schema/data restore succeeded, but PITR/plan status, Auth-user/Adam UUID verification, named restoration owner, and separate protected Storage file backup remain unresolved. Obtain Adam's explicit decisions and complete every blocked check before any migration or deployment decision.
+**NO-GO — release evidence complete; production deployment not approved.** The reviewed local commit is `37301e3065339872ee7db70ee2fe39666a763c36`, `origin/main` remains `3586f196108c707b241b6ef30f88510d69afc0c3`, the protected Storage backup is verified, the existing `.nc` paths remain compatible, and the manual database backup/restore evidence is complete. Remaining Adam approval is required for the Free-plan/no-PITR decision, after-hours cutover window and rollback operator, and final production GO. No production change was made.
