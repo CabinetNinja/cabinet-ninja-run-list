@@ -2,7 +2,7 @@
 
 ## Scope and safety
 
-Preflight date: 2026-08-12. This report is read-only release evidence only. No production migration, Auth change, RLS change, Storage change, Edge Function deployment, invitation, or email was performed. Approved database dumps and a protected read-only Storage backup were taken.
+Preflight date: 2026-08-12. This report records release evidence and the supervised after-hours partial cutover. Migration `202607240002`, Adam's Owner/Admin bootstrap, and the reviewed Edge Function deployment were performed against the verified project. Restrictive RLS, dashboard repair, private Storage, invitations, and email were not performed. Approved database dumps and a protected read-only Storage backup were taken.
 
 Repository: `CabinetNinja/cabinet-ninja-run-list`
 Branch: `phase-1b-security-foundation`
@@ -36,7 +36,7 @@ Expected base: `origin/main` at `3586f196108c707b241b6ef30f88510d69afc0c3`
 
 The 2026-08-07 linked dumps and migration listing confirm:
 
-- Remote migration history contains only `202607240001`; `202607240002` through `202607240005` are pending.
+- Initial remote migration history contained only `202607240001`; after the supervised Stage A cutover, `202607240002` is applied and `202607240003` through `202607240005` remain pending.
 - The public schema dump contains 20 public business tables, 40 unrestricted authenticated policies, and the Phase 1A schema/catalog objects.
 - `job-files` is public with no size/MIME limit; Storage schema evidence confirms authenticated users can read/list and upload job files.
 - Storage metadata contains 20 objects: 12 legitimate Mozaik CNC production `.nc` files with `application/octet-stream` and eight PDFs, totaling 8,356,206 bytes. The `.nc` objects are supported production inputs, not disposable legacy references.
@@ -60,7 +60,7 @@ No UUID, password, database URL, customer data, or secret value is present in th
 
 ## Manual backup evidence
 
-The linked project was verified as `xoyzmjbjbaknvgtoofar` and the remote migration ledger was read-only verified as `202607240001` applied, with `202607240002` through `202607240005` pending. Using `supabase db dump` only, the following non-empty untracked evidence files were created under `preflight-evidence/2026-08-07-manual-backup/`:
+The linked project was verified as `xoyzmjbjbaknvgtoofar`. The original 2026-08-07 remote migration ledger showed `202607240001` applied with `202607240002` through `202607240005` pending; the supervised after-hours execution subsequently applied `202607240002` only, and the migration guard stopped before `202607240003`. Using `supabase db dump` only, the following non-empty untracked evidence files were created under `preflight-evidence/2026-08-07-manual-backup/`:
 
 - `roles-only.sql` — SHA-256 `25873CEC56A2CC6514E204F420231777F85C03DA818CAA7090CDCDFA89776ECD`
 - `public-schema.sql` — SHA-256 `A7EE7646C6599C3F352826EB9C8E81FBC83592DF37A5D8D7487DFA67168B409F`
@@ -85,20 +85,27 @@ The project remains operationally treated as **Free-plan/no-PITR**: the manual d
 - Upgrade/idempotency suite passed: existing identities, data, IDs, numbers, and legacy CNC paths preserved; no roles auto-assigned; repeatable migrations stable.
 - JavaScript syntax check passed; Node regression suite passed 19/19 tests; Vitest login-containment check passed 1/1 test.
 
-## Remaining Adam decisions and credentials
+## Adam decisions recorded
 
-The following remain required before any production migration or deployment; none belong in source control or shell history:
+- Manual backup/no-PITR accepted.
+- After-hours cutover approved for 2026-08-12 from 21:58 NZ time; Adam is the rollback operator.
+- Final production GO received.
+- These approvals do not override the technical STOP requiring the reviewed browser compatibility release to be live before restrictive RLS/private Storage.
 
-- Confirm whether the Free-plan/no-PITR assumption is acceptable or provide separately verified PITR/backup-plan evidence.
-- Approve the after-hours private Storage cutover window and rollback operator.
-- Give final GO approval for the reviewed role permissions, assignment scope, retention/manual-review rule, and customer-access exclusion.
-- Approve the staged production deployment order only after the compatible application and Edge Function release path has been independently verified.
+## After-hours execution status — 2026-08-12 21:58 NZ time
+
+- Adam accepted the manual backup/no-PITR decision, named Adam as rollback operator, and gave final production GO.
+- Stage A completed: `202607240002_role_profile_foundation.sql` applied successfully. The restrictive RLS migration stopped as designed before changing policies because Owner/Admin bootstrap had not yet occurred.
+- Stage B completed: the single confirmed Auth user `info@cabinetninja.co.nz` was verified as Adam's intended Owner/Admin account; the approved bootstrap succeeded and one active Owner/Admin profile was verified. The Auth UUID is not recorded here.
+- Stage C completed: the reviewed `job-file-url` Edge Function was deployed to project `xoyzmjbjbaknvgtoofar`.
+- STOP before Stage D: the published GitHub Pages app is still serving the older `main` revision and does not contain the signed-URL/private-storage compatibility markers. Restrictive RLS and private Storage must not be applied until the reviewed browser compatibility code is live and smoke-tested.
+- No production business data or Storage objects were moved, renamed, deleted, or overwritten. Migrations `202607240003` through `202607240005` remain unapplied.
 
 ## Exact STOP/GO points
 
 ### STOP — current preflight
 
-STOP. Do not apply any migration. Read-only release evidence is complete, but production cutover approval, after-hours timing, and the Free-plan/no-PITR decision remain unresolved.
+STOP. Do not apply `202607240003` through `202607240005` until the reviewed browser compatibility code is live on the published Pages site and smoke-tested. Adam's approval, after-hours window, backup decision, and rollback operator are recorded; the remaining blocker is the missing published compatibility release.
 
 ### GO gate before any schema work
 
@@ -149,8 +156,8 @@ The current PWA can remain usable through the staged order only if the compatibl
 
 ## Updated recommendation after manual backup
 
-**NO-GO — release evidence is complete, but production preflight remains approval-gated.** The manual database backup and isolated schema/data restore succeeded. The protected 20-object Storage backup, all 12 `.nc` hashes, EFS protection, and one-file `.nc`/PDF restore rehearsal also succeeded. Do not migrate or deploy until Adam resolves the Free-plan/no-PITR decision, approves the after-hours cutover window and rollback operator, and gives final production GO approval.
+**STOP — release evidence is complete, but the compatibility release is not live.** The manual database backup and isolated schema/data restore succeeded. The protected 20-object Storage backup, all 12 `.nc` hashes, EFS protection, and one-file `.nc`/PDF restore rehearsal also succeeded. Adam's backup decision, after-hours approval, rollback operator, and final GO are recorded; do not apply restrictive RLS/private Storage until the reviewed browser compatibility code is live and smoke-tested.
 
 ## Final recommendation
 
-**NO-GO — release evidence complete; production deployment not approved.** The reviewed local commit is `37301e3065339872ee7db70ee2fe39666a763c36`, `origin/main` remains `3586f196108c707b241b6ef30f88510d69afc0c3`, the protected Storage backup is verified, the existing `.nc` paths remain compatible, and the manual database backup/restore evidence is complete. Remaining Adam approval is required for the Free-plan/no-PITR decision, after-hours cutover window and rollback operator, and final production GO. No production change was made.
+**STOP — production cutover partially executed and safely paused.** The reviewed local commit is `37301e3065339872ee7db70ee2fe39666a763c36`, `origin/main` remains `3586f196108c707b241b6ef30f88510d69afc0c3`, the protected Storage backup is verified, Stage A/Owner/Admin bootstrap and the Edge Function deployment succeeded, and the restrictive/private-file migrations remain unapplied. Adam's final GO is recorded, but the published Pages compatibility release must be completed and smoke-tested before continuing.
