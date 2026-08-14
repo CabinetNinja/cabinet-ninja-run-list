@@ -2,12 +2,13 @@
 
 ## Scope and safety
 
-Preflight date: 2026-08-12. This report records release evidence and the supervised after-hours partial cutover. Migration `202607240002`, Adam's Owner/Admin bootstrap, and the reviewed Edge Function deployment were performed against the verified project. Restrictive RLS, dashboard repair, private Storage, invitations, and email were not performed. Approved database dumps and a protected read-only Storage backup were taken.
+Preflight close-out date: 2026-08-14. This report records release evidence and the supervised partial cutover. Migration `202607240002`, Adam's Owner/Admin bootstrap, and the reviewed Edge Function deployment were performed against the verified project. Restrictive RLS, dashboard repair, private Storage, invitations, and email were not performed. Approved database dumps and a protected read-only Storage backup were taken.
 
 Repository: `CabinetNinja/cabinet-ninja-run-list`
 Branch: `phase-1b-security-foundation`
-Reviewed commit: `37301e3065339872ee7db70ee2fe39666a763c36` (`37301e3`)
-Expected base: `origin/main` at `3586f196108c707b241b6ef30f88510d69afc0c3`
+Reviewed implementation commit: `37301e3065339872ee7db70ee2fe39666a763c36` (`37301e3`)
+Published compatibility release: `b22f7cb2f5ca38795f3749a8c8705fdd9ee43a09` (`b22f7cb`)
+Current `origin/main`: `b22f7cb2f5ca38795f3749a8c8705fdd9ee43a09`; this was a fast-forward from `3586f196`.
 
 ## Confirmed facts
 
@@ -15,11 +16,11 @@ Expected base: `origin/main` at `3586f196108c707b241b6ef30f88510d69afc0c3`
 
 - Supabase CLI project enumeration confirms project `xoyzmjbjbaknvgtoofar`, named `cabinet-ninja-run-list`, region `ap-northeast-2`, PostgreSQL 17.6, status `ACTIVE_HEALTHY`.
 - The local Supabase project is linked to `xoyzmjbjbaknvgtoofar` for read-only CLI operations. The repository's local test project ID remains unchanged.
-- `origin/main` remains `3586f196`; before this evidence-only publication, the remote Phase 1B branch was at `70d0f4b` and the local reviewed branch is at `37301e3`.
+- `origin/main` is now `b22f7cb`; the `phase-1b-security-foundation` branch also remains at `b22f7cb`. No other branch or tag was pushed during the publication.
 
 ### Remote functions and customer access
 
-- Read-only Supabase CLI function enumeration returns no deployed Edge Functions. The reviewed `job-file-url` function is source-only and has not been deployed.
+- Read-only Supabase CLI function enumeration confirms the reviewed `job-file-url` Edge Function is active with JWT verification enabled. No additional Edge Function was deployed during this evidence pass.
 - The only listed project secret is recorded by name only; its value was not read or retained.
 - Source and the Phase 1A baseline contain no customer portal tables, memberships, customer policies, customer invitations, or customer-facing access flags. Customer access remains disabled and out of scope.
 - No invitation or email command was run. No invitation or email will be sent during this preflight.
@@ -39,8 +40,8 @@ The 2026-08-07 linked dumps and migration listing confirm:
 - Initial remote migration history contained only `202607240001`; after the supervised Stage A cutover, `202607240002` is applied and `202607240003` through `202607240005` remain pending.
 - The public schema dump contains 20 public business tables, 40 unrestricted authenticated policies, and the Phase 1A schema/catalog objects.
 - `job-files` is public with no size/MIME limit; Storage schema evidence confirms authenticated users can read/list and upload job files.
-- Storage metadata contains 20 objects: 12 legitimate Mozaik CNC production `.nc` files with `application/octet-stream` and eight PDFs, totaling 8,356,206 bytes. The `.nc` objects are supported production inputs, not disposable legacy references.
-- No Storage file contents were read; only database metadata was dumped.
+- Storage metadata now contains 22 objects: 12 legitimate Mozaik CNC production `.nc` files with `application/octet-stream` and 10 PDFs, totaling 9,451,630 bytes. The `.nc` objects are supported production inputs, not disposable legacy references.
+- The two objects absent from the original 20-object manifest were identified by metadata before any file contents were read; both are PDFs and are covered by the approved file model.
 
 The complete raw evidence is untracked under `preflight-evidence/2026-08-07-manual-backup/`.
 
@@ -50,9 +51,10 @@ The complete raw evidence is untracked under `preflight-evidence/2026-08-07-manu
 - `.nc` policy: Owner/Admin may read, download, upload and manage; Workshop may read, download and upload; Office, Install, Read-only, unassigned, unauthenticated, and customer/external callers are denied. Generic `application/octet-stream` remains blocked except for an explicit `.nc` path with an authorised Owner/Admin or Workshop role.
 - Existing legacy object paths remain unchanged and compatible with the future private-bucket signed-URL path. No production object was moved, renamed, deleted, or overwritten.
 - The protected backup was taken read-only through the authenticated Storage API endpoint, not a public URL, and is outside the Git repository at `C:\Users\Adam Ants\Documents\CabinetNinja\Phase1B-Storage-Backup-20260812`.
-- Protected backup inventory: 20 objects total, 12 `.nc` files, eight PDFs, and `8,356,206` total bytes.
+- Protected backup inventory: 22 objects total, 12 `.nc` files, 10 PDFs, and `9,451,630` total bytes.
 - Every downloaded object matched its previously recorded content length and response ETag. All 12 `.nc` files are present at their exact bucket-relative paths.
-- SHA-256 manifest: `F690F1D0D95D1E1CA563F2ACA6C2817CBC2BA7DEA071CD9A7AA14B3670A79681`.
+- Original 20-object SHA-256 manifest: `F690F1D0D95D1E1CA563F2ACA6C2817CBC2BA7DEA071CD9A7AA14B3670A79681`.
+- Reconciled 22-object manifest: `2582D15385ACD9BD2FEA7D1A83561668038C4C7E462C4E1D4D7F7F1971138D2E`, stored as `storage-manifest-22.json` with its checksum in `storage-manifest-22.sha256.txt`.
 - The backup directory and manifest are EFS-encrypted with AES-256 for Adam's Windows account. No credentials, tokens, Auth UUIDs, or backup archive were committed.
 - A non-production restore/read rehearsal passed for one `.nc` file (`48,595` bytes) and one PDF (`694,355` bytes), with byte-for-byte SHA-256 matches.
 
@@ -70,11 +72,16 @@ The linked project was verified as `xoyzmjbjbaknvgtoofar`. The original 2026-08-
 
 The public schema/data dump restored successfully into a disposable local PostgreSQL database, which was dropped after verification. The restore contained 20 public tables, 11 jobs with six `CN-####` values (`CN-0042` through `CN-0047`), six leads with two `CNL-####` values (`CNL-0048` through `CNL-0049`), 35 cut patterns, 396 revisions, one job-file metadata row, and a representative `CN-0044` record. Full restore evidence is in `preflight-evidence/2026-08-07-manual-backup/restore-test-results.txt`.
 
-Storage metadata confirms 20 `job-files` objects: 12 legitimate `.nc` production files with `application/octet-stream`, eight PDFs, and 8,356,206 bytes total (approximately 8.36 MB). The bucket is currently public; authenticated users can list/read all job files and upload to the bucket. Database dumps do not back up file contents. The separate protected file backup below preserves all 20 objects, including all 12 `.nc` files, at their exact paths with content SHA-256 hashes.
+Storage metadata confirms 22 `job-files` objects: 12 legitimate `.nc` production files with `application/octet-stream`, 10 PDFs, and 9,451,630 bytes total (approximately 9.45 MB). The bucket is currently public; authenticated users can list/read all job files and upload to the bucket. Database dumps do not back up file contents. The separate protected file backup below preserves all 22 objects, including all 12 `.nc` files, at their exact paths with content SHA-256 hashes.
 
 The project plan/PITR capability is not exposed by the CLI project listing, and no PITR restore point was available in this read-only context. Operationally treat this as **Free-plan/no-PITR until Adam verifies otherwise**. The manual database dump and isolated local PostgreSQL restore are verified, Adam is the named restoration owner, and the protected Storage file restore/read rehearsal is complete. No PITR restore point is claimed.
 
-The protected Storage procedure is documented in `PHASE-1B-STORAGE-BACKUP-PROCEDURE.md`. The separate protected backup is now complete: all 20 objects were downloaded read-only through the authenticated Storage API endpoint, preserving exact paths; all 12 `.nc` files and eight PDFs matched their recorded byte lengths and response ETags; and the protected manifest records SHA-256 hashes for every object. The manifest hash is `F690F1D0D95D1E1CA563F2ACA6C2817CBC2BA7DEA071CD9A7AA14B3670A79681`. A local restore/read rehearsal for one `.nc` and one PDF passed byte-for-byte.
+The protected Storage procedure is documented in `PHASE-1B-STORAGE-BACKUP-PROCEDURE.md`. Metadata reconciliation against the original manifest identified these two additional objects before content download:
+
+- `job_mrlcmjy5_daldo1/CN-0046_SHARED_S01R01_1786155284888_fmsjqqmc8e27wij.pdf` — `547,712` bytes; ETag `"9de07ada0f9c60ce315c73efc85301f0"`; MIME `application/pdf`; created `2026-08-08 02:14:53.651531+00`; updated `2026-08-08 02:14:53.651531+00`.
+- `job_msjqp8dl_atm9nl/CN-0050_UNKNOWN_S01R01_1786155356565_fmsjqs5n9yfc4u2.pdf` — `547,712` bytes; ETag `"9de07ada0f9c60ce315c73efc85301f0"`; MIME `application/pdf`; created `2026-08-08 02:16:05.234528+00`; updated `2026-08-08 02:16:05.234528+00`.
+
+Both objects are PDFs, not `.nc` CNC files or another unsupported type. They were then downloaded read-only through authenticated Storage API requests with an Authorization header, preserving exact paths; no public URL was used. The protected backup now contains all 22 objects, including all 12 `.nc` files and 10 PDFs, totaling `9,451,630` bytes. All original 20 objects still match their previously recorded sizes and SHA-256 hashes. The reconciled manifest hash is `2582D15385ACD9BD2FEA7D1A83561668038C4C7E462C4E1D4D7F7F1971138D2E`. A local restore/read rehearsal for one `.nc` and one PDF passed byte-for-byte.
 
 The project remains operationally treated as **Free-plan/no-PITR**: the manual database dump and isolated local PostgreSQL restore are the verified database recovery evidence. The protected Storage backup and local file restore/read rehearsal are now also verified. No PITR restore point was claimed.
 
@@ -85,31 +92,39 @@ The project remains operationally treated as **Free-plan/no-PITR**: the manual d
 - Upgrade/idempotency suite passed: existing identities, data, IDs, numbers, and legacy CNC paths preserved; no roles auto-assigned; repeatable migrations stable.
 - JavaScript syntax check passed; Node regression suite passed 19/19 tests; Vitest login-containment check passed 1/1 test.
 
-## Adam decisions recorded
+## Adam manual smoke confirmation — 2026-08-14
 
-- Manual backup/no-PITR accepted.
-- After-hours cutover approved for 2026-08-12 from 21:58 NZ time; Adam is the rollback operator.
-- Final production GO received.
-- These approvals do not override the technical STOP requiring the reviewed browser compatibility release to be live before restrictive RLS/private Storage.
+- Adam manually checked the live Cabinet Ninja app and confirmed that the required production files are good, including the `.nc` CNC production files and PDFs.
+- The authenticated file smoke test is treated as complete for this preflight.
+- This confirmation validates the compatibility release; it does not authorize migrations, RLS changes, private Storage, Auth changes, or deployment.
+
+## Adam approvals required before production cutover
+
+- The final production status remains **NO-GO** until Adam separately provides all of the following:
+  - acceptance of the Free-plan/no-PITR manual-backup risk;
+  - an after-hours cutover window in New Zealand time;
+  - the rollback operator;
+  - explicit `Final production GO: Yes`.
+- Earlier after-hours notes remain historical execution evidence only and are not treated as the current final cutover approval for this close-out.
 
 ## After-hours execution status — 2026-08-12 21:58 NZ time
 
-- Adam accepted the manual backup/no-PITR decision, named Adam as rollback operator, and gave final production GO.
+- The earlier after-hours execution record is retained as historical evidence; current close-out approval remains pending under the separate approval gate above.
 - Stage A completed: `202607240002_role_profile_foundation.sql` applied successfully. The restrictive RLS migration stopped as designed before changing policies because Owner/Admin bootstrap had not yet occurred.
 - Stage B completed: the single confirmed Auth user `info@cabinetninja.co.nz` was verified as Adam's intended Owner/Admin account; the approved bootstrap succeeded and one active Owner/Admin profile was verified. The Auth UUID is not recorded here.
 - Stage C completed: the reviewed `job-file-url` Edge Function was deployed to project `xoyzmjbjbaknvgtoofar`.
-- STOP before Stage D: the published GitHub Pages app is still serving the older `main` revision and does not contain the signed-URL/private-storage compatibility markers. Restrictive RLS and private Storage must not be applied until the reviewed browser compatibility code is live and smoke-tested.
+- Stage D completed as the approved application-only step: `main` was fast-forwarded to `b22f7cb`, GitHub Pages published the compatibility release, and read-only live smoke checks confirmed the login form, Run List route, signed-URL markers, legacy `storage_path` handling, and `.nc` compatibility.
 - No production business data or Storage objects were moved, renamed, deleted, or overwritten. Migrations `202607240003` through `202607240005` remain unapplied.
 
 ## Exact STOP/GO points
 
 ### STOP — current preflight
 
-STOP. Do not apply `202607240003` through `202607240005` until the reviewed browser compatibility code is live on the published Pages site and smoke-tested. Adam's approval, after-hours window, backup decision, and rollback operator are recorded; the remaining blocker is the missing published compatibility release.
+STOP. The compatibility release is live, Adam's manual file smoke confirmation is complete, and the reconciled 22-object backup is verified. This close-out does not authorize `202607240003` through `202607240005`, RLS changes, Storage visibility/policy changes, Auth changes, or any deployment. Wait for the four separate Adam approvals before any private Storage cutover.
 
 ### GO gate before any schema work
 
-GO only after an approved operator, using a verified production connection, confirms:
+GO only after Adam provides the four approvals above and an approved operator, using a verified production connection, confirms:
 
 - project ref is exactly `xoyzmjbjbaknvgtoofar`;
 - remote history is exactly `202607240001` and dry-run lists only `202607240002`–`202607240005`;
@@ -117,6 +132,16 @@ GO only after an approved operator, using a verified production connection, conf
 - backup/PITR restore point predates all changes, is restorable, and has a named owner;
 - Adam's Auth UUID and all internal users are verified; no test account is assigned;
 - customer access and invitations remain disabled.
+
+The exact production cutover steps, to be performed only after that GO gate, are:
+
+1. Record Adam's Free-plan/no-PITR acceptance, NZ-time cutover window, rollback operator, and explicit `Final production GO: Yes`.
+2. Reconfirm project `xoyzmjbjbaknvgtoofar`, published compatibility release `b22f7cb`, the protected 22-object backup, and that only migrations `202607240001` and `202607240002` are applied. Do not reapply `202607240002`.
+3. Apply `202607240003` only; verify restrictive role-based access and denied unassigned access. Stop on any unexpected policy or data result.
+4. Apply `202607240004` only; verify the seven dashboard columns and three indexes. Stop on any unexpected schema result.
+5. At the approved NZ-time window, apply `202607240005` only; verify `job-files` is private, the exact MIME/extension policy is active, and no object paths or contents moved.
+6. Run the authenticated compatibility smoke test for legacy and new paths: Owner/Admin and Workshop access to `.nc` and PDFs, denial for Office, Install, Read-only, unassigned, unauthenticated, and customer callers, fixed 900-second signed URLs, and rejection of generic octet-stream files.
+7. Record the final production GO/NO-GO decision. If any check fails, stop and use the documented rollback procedure without moving or deleting Storage objects.
 
 ### STOP points during deployment
 
@@ -133,19 +158,11 @@ GO only after an approved operator, using a verified production connection, conf
 
 ## PWA compatibility assessment
 
-The current PWA can remain usable through the staged order only if the compatible browser code and signed-URL Edge Function are deployed and smoke-tested before restrictive RLS and before the private-bucket change. The PWA is not safe to take directly from the current public/unrestricted production state to private Storage without that staged sequence. Customer access must remain disabled throughout.
+The compatible browser code and signed-URL Edge Function are live and Adam's manual file smoke confirmation is complete. The PWA still must not be taken directly from the current public/unrestricted production state to private Storage without the separately approved staged sequence. Customer access must remain disabled throughout.
 
-## Recommended deployment order
+## Production cutover sequence
 
-1. Capture this preflight and a fresh schema/catalog/Storage/Auth evidence set.
-2. Confirm encrypted backup/PITR restore evidence and named restoration owner.
-3. Apply `202607240002` only; verify it records successfully.
-4. Bootstrap and authenticate Adam's verified Owner/Admin UUID; verify jobs, items, and job files.
-5. Deploy compatible PWA code and the reviewed Edge Function; verify CORS, authentication, fixed 900-second URLs, and service-role isolation.
-6. Apply `202607240003`; verify restrictive RLS and denied unassigned access.
-7. Apply `202607240004`; verify seven columns and three indexes.
-8. Obtain explicit after-hours approval, then apply `202607240005`.
-9. Verify representative legacy and new `.nc` paths without exposing file contents, including Owner/Admin and Workshop signed URLs and denial for Office, Install, Read-only, unassigned, and unauthenticated callers; then make the final operational GO decision.
+The exact production cutover steps are listed under the GO gate above. No cutover step is authorized by this close-out. Migration `202607240002` is already applied and must not be reapplied; only `202607240003` through `202607240005` remain candidates for a separately approved future cutover.
 
 ## Rollback decision points
 
@@ -156,8 +173,8 @@ The current PWA can remain usable through the staged order only if the compatibl
 
 ## Updated recommendation after manual backup
 
-**STOP — release evidence is complete, but the compatibility release is not live.** The manual database backup and isolated schema/data restore succeeded. The protected 20-object Storage backup, all 12 `.nc` hashes, EFS protection, and one-file `.nc`/PDF restore rehearsal also succeeded. Adam's backup decision, after-hours approval, rollback operator, and final GO are recorded; do not apply restrictive RLS/private Storage until the reviewed browser compatibility code is live and smoke-tested.
+**STOP — release evidence is complete; private cutover remains unauthorized.** The manual database backup and isolated schema/data restore succeeded. The protected 22-object Storage backup, all 12 `.nc` hashes, EFS protection, metadata reconciliation, and one-file `.nc`/PDF restore rehearsal are verified. The compatibility release is live at `b22f7cb`, but do not apply restrictive RLS/private Storage or make any further production change without separate approval.
 
 ## Final recommendation
 
-**STOP — production cutover partially executed and safely paused.** The reviewed local commit is `37301e3065339872ee7db70ee2fe39666a763c36`, `origin/main` remains `3586f196108c707b241b6ef30f88510d69afc0c3`, the protected Storage backup is verified, Stage A/Owner/Admin bootstrap and the Edge Function deployment succeeded, and the restrictive/private-file migrations remain unapplied. Adam's final GO is recorded, but the published Pages compatibility release must be completed and smoke-tested before continuing.
+**NO-GO — final preflight is closed and production cutover is paused.** The reviewed implementation is `37301e3065339872ee7db70ee2fe39666a763c36`; published `main` is `b22f7cb2f5ca38795f3749a8c8705fdd9ee43a09`; the compatibility release is live; migrations `202607240003` through `202607240005` remain unapplied; `job-files` remains public; Adam's authenticated file smoke confirmation is recorded; and the reconciled 22-object backup is verified. No files or business data were moved. Wait for Adam's four separate approvals before any restrictive RLS or private Storage cutover.
