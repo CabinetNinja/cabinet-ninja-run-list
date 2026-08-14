@@ -344,6 +344,7 @@ let remoteSaveQueue = Promise.resolve();
 let dashboardColumnsAvailable = true;
 let workshopTablesAvailable = true;
 let customersTableAvailable = true;
+let customerLinkColumnAvailable = true;
 let dymoLabelState = { labels: [], selectedSheetKeys: [], includeSeparators: true, edgeOrder: "left,top,right,bottom" };
 let customerFolderSelection = { files: [], name: "", handle: null };
 const customerFolderRelativePaths = new WeakMap();
@@ -1117,7 +1118,10 @@ function ensureDefaultChecklistTemplates(data) {
 }
 
 function saveState(nextState = state) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+  const localSnapshot = dataStore?.mode === "supabase" && !customerFeaturesAvailable()
+    ? stripCustomerMigrationData(nextState)
+    : cloneState(nextState);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(localSnapshot));
   if (dataStore?.saveState) {
     const snapshot = cloneState(nextState);
     remoteSaveQueue = remoteSaveQueue
@@ -1140,6 +1144,20 @@ function changedRecordRows(previousRows = [], nextRows = [], cleaner = (row) => 
   return nextRows
     .map((row) => ({ row, cleaned: cleaner(row), previous: previousById.get(row.id) }))
     .filter(({ cleaned, previous }) => !previous || JSON.stringify(cleaned) !== JSON.stringify(previous));
+}
+
+function customerFeaturesAvailable() {
+  return customersTableAvailable && customerLinkColumnAvailable;
+}
+
+function stripCustomerMigrationData(data) {
+  const safeState = cloneState(data);
+  safeState.customers = [];
+  safeState.jobs = (safeState.jobs || []).map((jobItem) => {
+    const { customer_id, ...jobWithoutCustomer } = jobItem;
+    return jobWithoutCustomer;
+  });
+  return safeState;
 }
 
 function createDataStore() {
@@ -1193,16 +1211,27 @@ function createSupabaseStore(config) {
     if (!result.error) return result;
     if (!isMissingCustomerTableError(result.error)) throw result.error;
     customersTableAvailable = false;
-    backendStatus.message = "Synced without the Phase 1C customer table; run the customer foundation migration";
+    backendStatus.message = customerMigrationMessage();
+    return { data: [], error: null };
+  }
+
+  async function optionalCustomerColumnQuery(query) {
+    const result = await query;
+    if (!result.error) return result;
+    if (!isMissingCustomerColumnError(result.error)) throw result.error;
+    customerLinkColumnAvailable = false;
+    backendStatus.message = customerMigrationMessage();
     return { data: [], error: null };
   }
 
   async function loadTables() {
     customersTableAvailable = true;
+    customerLinkColumnAvailable = true;
     workshopTablesAvailable = true;
     const [
       suppliers,
       customers,
+      customerLinkColumn,
       leads,
       jobs,
       categories,
@@ -1223,6 +1252,7 @@ function createSupabaseStore(config) {
     ] = await Promise.all([
       client.from("suppliers").select("*").order("supplier_name"),
       optionalCustomerQuery(client.from("customers").select("*").order("display_name")),
+      optionalCustomerColumnQuery(client.from("jobs").select("id, customer_id").limit(1)),
       client.from("leads").select("*").order("created_at", { ascending: false }),
       client.from("jobs").select("*").order("job_name"),
       client.from("categories").select("*").order("category_name"),
@@ -1266,6 +1296,7 @@ function createSupabaseStore(config) {
     for (const key of TABLES) {
       if (result[key].error) throw result[key].error;
     }
+    if (!customerFeaturesAvailable()) backendStatus.message = customerMigrationMessage();
 
     return normalizeState({
       suppliers: suppliers.data || [],
@@ -1304,9 +1335,9 @@ function createSupabaseStore(config) {
     const normalized = normalizeState(nextState);
     const previous = previousState ? normalizeState(previousState) : {};
     await saveChangedRows("suppliers", previous.suppliers, normalized.suppliers, cleanSupplier);
-    if (customersTableAvailable) await saveChangedRows("customers", previous.customers, normalized.customers, cleanCustomer);
+    if (customerFeaturesAvailable()) await saveChangedRows("customers", previous.customers, normalized.customers, cleanCustomer);
     await saveChangedDashboardRows("leads", previous.leads, normalized.leads, cleanLead);
-    await saveChangedDashboardRows("jobs", previous.jobs, normalized.jobs, cleanJob);
+    await saveChangedDashboardRows("jobs", previous.jobs, normalized.jobs, (row) => cleanJob(row, customerFeaturesAvailable()));
     await saveChangedRows("categories", previous.categories, normalized.categories, cleanCategory);
     await saveChangedRows("items", previous.items, normalized.items, cleanItem);
     await saveChangedRows("checklist_templates", previous.checklist_templates, normalized.checklist_templates, cleanChecklistTemplate);
@@ -1382,12 +1413,15 @@ function createSupabaseStore(config) {
       }
 
       const remoteState = await seedRemoteIfNeeded(await loadTables());
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteState));
+      const safeState = customerFeaturesAvailable() ? remoteState : stripCustomerMigrationData(remoteState);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(safeState));
       return {
         mode: "supabase",
-        message: workshopTablesAvailable ? "Synced with Supabase" : backendStatus.message,
+        message: !customerFeaturesAvailable()
+          ? customerMigrationMessage()
+          : workshopTablesAvailable ? "Synced with Supabase" : backendStatus.message,
         userEmail: session?.user?.email || "",
-        state: remoteState,
+        state: safeState,
       };
     },
     saveState: saveChangedState,
@@ -1482,8 +1516,8 @@ function cleanLead(item) {
   });
 }
 
-function cleanJob(item) {
-  return pickDefined({
+function cleanJob(item, includeCustomerLink = true) {
+  const cleaned = pickDefined({
     id: item.id,
     job_number: item.job_number || "",
     client_name: item.client_name || "",
@@ -1499,6 +1533,8 @@ function cleanJob(item) {
     created_at: item.created_at,
     updated_at: item.updated_at,
   });
+  if (!includeCustomerLink) delete cleaned.customer_id;
+  return cleaned;
 }
 
 function stripDashboardColumns(row) {
@@ -1539,6 +1575,15 @@ function isMissingWorkshopTableError(error) {
 function isMissingCustomerTableError(error) {
   const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
   return message.includes("customers") && (message.includes("does not exist") || message.includes("schema cache"));
+}
+
+function isMissingCustomerColumnError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return message.includes("customer_id") && (message.includes("does not exist") || message.includes("schema cache"));
+}
+
+function customerMigrationMessage() {
+  return "Customer features require the Phase 1C migration (customers table and jobs.customer_id column). Existing job features remain available.";
 }
 
 function cleanCategory(item) {
@@ -2036,10 +2081,18 @@ function logActivity(jobId, entityType, entityId, action, previousValue = "", ne
 
 function render() {
   const route = getRoute();
+  document.querySelectorAll("[data-customer-nav]").forEach((link) => {
+    link.classList.toggle("hidden", !customerFeaturesAvailable());
+  });
   document.querySelectorAll(".bottom-nav a").forEach((link) => {
     link.classList.toggle("active", route.name === link.dataset.route || route.section === link.dataset.route);
   });
   backButton.classList.toggle("hidden", route.name === "home");
+
+  if (isCustomerRoute(route) && !customerFeaturesAvailable()) {
+    renderCustomerMigrationBlocked();
+    return;
+  }
 
   const screens = {
     home: renderHome,
@@ -2075,6 +2128,21 @@ function render() {
   const screen = screens[route.name] || renderHome;
   screen();
   app.focus({ preventScroll: true });
+}
+
+function isCustomerRoute(route) {
+  return ["customers", "customer", "customerform"].includes(route.name);
+}
+
+function renderCustomerMigrationBlocked() {
+  setTitle("Customers unavailable");
+  app.innerHTML = `
+    <section class="panel">
+      <h2>Customer features unavailable</h2>
+      <p class="muted">${escapeHtml(customerMigrationMessage())}</p>
+      <a class="ghost-button" href="#/jobs">Continue to Jobs</a>
+    </section>
+  `;
 }
 
 function renderLoading() {
@@ -2776,6 +2844,10 @@ function renderLeads() {
 }
 
 function renderCustomers() {
+  if (!customerFeaturesAvailable()) {
+    renderCustomerMigrationBlocked();
+    return;
+  }
   const params = getRoute().params;
   const showInactive = params.show === "inactive";
   setTitle(showInactive ? "Inactive Customers" : "Customers");
@@ -2808,6 +2880,10 @@ function renderCustomers() {
 }
 
 function renderCustomerDetail(id) {
+  if (!customerFeaturesAvailable()) {
+    renderCustomerMigrationBlocked();
+    return;
+  }
   const customerItem = customerById(id);
   if (!customerItem) {
     renderNotFound("Customer not found.");
@@ -2848,6 +2924,10 @@ function renderCustomerDetail(id) {
 }
 
 function renderCustomerForm(params = {}, id = null) {
+  if (!customerFeaturesAvailable()) {
+    renderCustomerMigrationBlocked();
+    return;
+  }
   const editing = id ? customerById(id) : null;
   const customerItem = editing || createCustomer({});
   setTitle(editing ? "Edit Customer" : "New Customer");
@@ -3107,7 +3187,7 @@ function renderJobs() {
         <a class="list-link mobile-list-card job-card" href="#/jobs/${jobItem.id}">
           <span>
             <strong>${escapeHtml(labelForJob(jobItem))}</strong><br>
-          <span class="muted">${escapeHtml([jobItem.job_number, customerLabel(customerById(jobItem.customer_id)), jobItem.location, checklistMeta].filter(Boolean).join(" - ") || "Job")}</span>
+          <span class="muted">${escapeHtml([jobItem.job_number, customerFeaturesAvailable() ? customerLabel(customerById(jobItem.customer_id)) : "", jobItem.location, checklistMeta].filter(Boolean).join(" - ") || "Job")}</span>
           </span>
           <span class="mobile-card-end"><span class="status-pill ${jobItem.priority === "urgent" ? "urgent" : ""}">${escapeHtml(readable(jobItem.status))}</span><span class="count-pill">${count}</span><span aria-hidden="true">&rsaquo;</span></span>
         </a>
@@ -3143,7 +3223,7 @@ function renderJobForm(params = {}) {
       </section>
       ${field("Client name", "client_name", "text", params.client || "", "full", true)}
       ${field("Job name", "job_name", "text", params.name || "", "full", true)}
-      ${selectField("Customer", "customer_id", params.customer_id || "", customerOptions())}
+      ${customerFeaturesAvailable() ? selectField("Customer", "customer_id", params.customer_id || "", customerOptions()) : ""}
       ${field("Location", "location", "text", params.location || "", "full")}
       ${selectField("Starting stage", "status", params.status || "job_accepted", JOB_STAGE_OPTIONS)}
       ${selectField("Priority", "priority", params.priority || "normal", PRIORITY_OPTIONS)}
@@ -3171,7 +3251,7 @@ function renderJobForm(params = {}) {
     newJob.target_install_date = form.get("target_install_date") || "";
     newJob.next_action = form.get("next_action") || "";
     newJob.next_action_due_date = form.get("next_action_due_date") || "";
-    newJob.customer_id = form.get("customer_id") || null;
+    if (customerFeaturesAvailable()) newJob.customer_id = form.get("customer_id") || null;
     newJob.active = newJob.status !== "archived";
     state.jobs.unshift(newJob);
     saveState();
@@ -3186,10 +3266,16 @@ function renderJobDetail(id) {
     return;
   }
   setTitle(labelForJob(jobItem));
-  const customerItem = customerById(jobItem.customer_id);
+  const customerItem = customerFeaturesAvailable() ? customerById(jobItem.customer_id) : null;
   const items = activeItems().filter((item) => item.job_id === id).sort(sortBySupplierThenName);
   const grouped = groupBy(items, (item) => supplierById(item.supplier_id)?.supplier_name || "No supplier");
   const qcWarning = jobNeedsQcWarning(id);
+  const customerSummary = customerFeaturesAvailable()
+    ? `<div class="list"><div class="list-link"><strong>Customer</strong><span>${customerItem ? `<a href="#/customers/${customerItem.id}">${escapeHtml(customerLabel(customerItem))}</a>` : "No customer linked"}</span></div></div>`
+    : "";
+  const customerSelect = customerFeaturesAvailable()
+    ? selectField("Customer", "customer_id", jobItem.customer_id || "", customerOptions(jobItem.customer_id || ""))
+    : "";
 
   app.innerHTML = `
     <div class="stack">
@@ -3202,9 +3288,7 @@ function renderJobDetail(id) {
       </div>
       <section class="panel">
         <h2>Job Stage</h2>
-        <div class="list">
-          <div class="list-link"><strong>Customer</strong><span>${customerItem ? `<a href="#/customers/${customerItem.id}">${escapeHtml(customerLabel(customerItem))}</a>` : "No customer linked"}</span></div>
-        </div>
+        ${customerSummary}
         <form class="inline-form" id="jobStageForm">
           ${selectField("Current stage", "status", jobItem.status || "active", JOB_STAGE_OPTIONS)}
           <button class="primary-action" type="submit">Update</button>
@@ -3213,7 +3297,7 @@ function renderJobDetail(id) {
       <section class="panel">
         <h2>Next Action</h2>
         <form class="form-grid" id="jobPlanningForm">
-          ${selectField("Customer", "customer_id", jobItem.customer_id || "", customerOptions(jobItem.customer_id || ""))}
+          ${customerSelect}
           ${selectField("Priority", "priority", jobItem.priority || "normal", PRIORITY_OPTIONS)}
           ${field("Target install date", "target_install_date", "date", jobItem.target_install_date || "")}
           ${field("Next action", "next_action", "text", jobItem.next_action || "", "full")}
@@ -3351,14 +3435,15 @@ function setJobStage(jobId, status) {
 function updateJobPlanning(jobId, values) {
   const jobItem = jobById(jobId);
   if (!jobItem) return;
-  Object.assign(jobItem, {
-    customer_id: values.customer_id || null,
+  const changes = {
     priority: values.priority || "normal",
     target_install_date: values.target_install_date || "",
     next_action: values.next_action || "",
     next_action_due_date: values.next_action_due_date || "",
     updated_at: nowIso(),
-  });
+  };
+  if (customerFeaturesAvailable()) changes.customer_id = values.customer_id || null;
+  Object.assign(jobItem, changes);
   saveState();
   toast("Job planning saved.");
   render();

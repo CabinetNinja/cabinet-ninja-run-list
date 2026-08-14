@@ -13,7 +13,7 @@ test("internal customer workflow is present without automatic job backfill", () 
     "#/customerform",
     "#/customers/${customerItem.id}",
     'selectField("Customer", "customer_id"',
-    "customer_id: values.customer_id || null",
+    "if (customerFeaturesAvailable()) changes.customer_id = values.customer_id || null",
     "function saveRecord(table, row, cleaned, previous)",
     "Concurrent update detected",
   ]) {

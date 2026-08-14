@@ -100,6 +100,17 @@ commit;
 "@
 Invoke-LocalSql $ownerInsert | Out-Null
 
+$ownerUpdate = @"
+begin;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '11111111-1111-1111-1111-111111111111';
+update public.customers set display_name = 'Phase 1C edited customer' where id = 'phase-1c-customer';
+select display_name from public.customers where id = 'phase-1c-customer';
+rollback;
+"@
+$editedCustomer = Invoke-LocalSql $ownerUpdate
+if ($editedCustomer -ne "Phase 1C edited customer") { throw "An authorised internal user could not edit a customer." }
+
 $workshopRead = Invoke-LocalSql @"
 begin;
 set local role authenticated;
