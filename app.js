@@ -1,6 +1,7 @@
 const STORAGE_KEY = "cabinet-ninja-run-list-v1";
 const TABLES = [
   "suppliers",
+  "customers",
   "leads",
   "jobs",
   "categories",
@@ -239,6 +240,7 @@ const DEFAULT_DATA = {
     supplier("Plumbing supplier", "Plumbing", ""),
     supplier("General farm supplies", "Farm supplies", ""),
   ],
+  customers: [],
   leads: [],
   jobs: [
     job("CN-0042", "Charis Mariner", "Charis Mariner", "", "active"),
@@ -330,7 +332,8 @@ const seedItems = [
   },
 ];
 
-let state = { suppliers: [], leads: [], jobs: [], categories: [], items: [] };
+let state = { suppliers: [], customers: [], leads: [], jobs: [], categories: [], items: [] };
+let lastSyncedState = null;
 let dataStore = null;
 let backendStatus = {
   mode: "local",
@@ -340,6 +343,7 @@ let backendStatus = {
 let remoteSaveQueue = Promise.resolve();
 let dashboardColumnsAvailable = true;
 let workshopTablesAvailable = true;
+let customersTableAvailable = true;
 let dymoLabelState = { labels: [], selectedSheetKeys: [], includeSeparators: true, edgeOrder: "left,top,right,bottom" };
 let customerFolderSelection = { files: [], name: "", handle: null };
 const customerFolderRelativePaths = new WeakMap();
@@ -387,6 +391,7 @@ async function initializeApp() {
   }
 
   state = loaded.state;
+  lastSyncedState = cloneState(state);
   render();
 }
 
@@ -703,6 +708,25 @@ function normalizeState(data) {
       default_contact: item.default_contact || "",
       notes: item.notes || "",
     })),
+    customers: (data.customers || []).map((item) => ({
+      customer_number: "",
+      display_name: "",
+      company_name: "",
+      phone: "",
+      email: "",
+      address: "",
+      notes: "",
+      active: true,
+      ...item,
+      customer_number: item.customer_number || "",
+      display_name: item.display_name || "",
+      company_name: item.company_name || "",
+      phone: item.phone || "",
+      email: item.email || "",
+      address: item.address || "",
+      notes: item.notes || "",
+      active: item.active !== false,
+    })),
     leads: (data.leads || []).map((item) => ({
       lead_number: "",
       lead_name: "",
@@ -748,6 +772,7 @@ function normalizeState(data) {
       next_action: "",
       next_action_due_date: "",
       target_install_date: "",
+      customer_id: null,
       active: true,
       ...item,
       job_number: item.job_number || "",
@@ -759,6 +784,7 @@ function normalizeState(data) {
       next_action: item.next_action || "",
       next_action_due_date: item.next_action_due_date || "",
       target_install_date: item.target_install_date || "",
+      customer_id: item.customer_id || null,
     })),
     categories: (data.categories || []).map((item) => ({
       notes: "",
@@ -1093,14 +1119,27 @@ function ensureDefaultChecklistTemplates(data) {
 function saveState(nextState = state) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
   if (dataStore?.saveState) {
-    const snapshot = JSON.parse(JSON.stringify(nextState));
+    const snapshot = cloneState(nextState);
     remoteSaveQueue = remoteSaveQueue
-      .then(() => dataStore.saveState(snapshot))
+      .then(async () => {
+        lastSyncedState = await dataStore.saveState(snapshot, lastSyncedState ? cloneState(lastSyncedState) : null);
+      })
       .catch((error) => {
         backendStatus.message = `Sync error: ${error.message}`;
         toast(backendStatus.message);
       });
   }
+}
+
+function cloneState(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function changedRecordRows(previousRows = [], nextRows = [], cleaner = (row) => row) {
+  const previousById = new Map(previousRows.filter((row) => row?.id).map((row) => [row.id, cleaner(row)]));
+  return nextRows
+    .map((row) => ({ row, cleaned: cleaner(row), previous: previousById.get(row.id) }))
+    .filter(({ cleaned, previous }) => !previous || JSON.stringify(cleaned) !== JSON.stringify(previous));
 }
 
 function createDataStore() {
@@ -1149,10 +1188,21 @@ function createSupabaseStore(config) {
     return { data: [], error: null };
   }
 
+  async function optionalCustomerQuery(query) {
+    const result = await query;
+    if (!result.error) return result;
+    if (!isMissingCustomerTableError(result.error)) throw result.error;
+    customersTableAvailable = false;
+    backendStatus.message = "Synced without the Phase 1C customer table; run the customer foundation migration";
+    return { data: [], error: null };
+  }
+
   async function loadTables() {
+    customersTableAvailable = true;
     workshopTablesAvailable = true;
     const [
       suppliers,
+      customers,
       leads,
       jobs,
       categories,
@@ -1172,6 +1222,7 @@ function createSupabaseStore(config) {
       activityHistory,
     ] = await Promise.all([
       client.from("suppliers").select("*").order("supplier_name"),
+      optionalCustomerQuery(client.from("customers").select("*").order("display_name")),
       client.from("leads").select("*").order("created_at", { ascending: false }),
       client.from("jobs").select("*").order("job_name"),
       client.from("categories").select("*").order("category_name"),
@@ -1193,6 +1244,7 @@ function createSupabaseStore(config) {
 
     const result = {
       suppliers,
+      customers,
       leads,
       jobs,
       categories,
@@ -1217,6 +1269,7 @@ function createSupabaseStore(config) {
 
     return normalizeState({
       suppliers: suppliers.data || [],
+      customers: customers.data || [],
       leads: leads.data || [],
       jobs: jobs.data || [],
       categories: categories.data || [],
@@ -1243,53 +1296,75 @@ function createSupabaseStore(config) {
     if (hasAnyData) return remoteState;
 
     const seedState = loadLocalState(false);
-    await saveFullState(seedState);
+    await saveChangedState(seedState, null);
     return loadTables();
   }
 
-  async function saveFullState(nextState) {
+  async function saveChangedState(nextState, previousState) {
     const normalized = normalizeState(nextState);
-    await upsertRows("suppliers", normalized.suppliers.map(cleanSupplier));
-    await upsertDashboardAwareRows("leads", normalized.leads.map(cleanLead));
-    await upsertDashboardAwareRows("jobs", normalized.jobs.map(cleanJob));
-    await upsertRows("categories", normalized.categories.map(cleanCategory));
-    await upsertRows("items", normalized.items.map(cleanItem));
-    await upsertRows("checklist_templates", normalized.checklist_templates.map(cleanChecklistTemplate));
-    await upsertRows("checklist_template_sections", normalized.checklist_template_sections.map(cleanChecklistTemplateSection));
-    await upsertRows("checklist_template_items", normalized.checklist_template_items.map(cleanChecklistTemplateItem));
-    await upsertRows("job_checklists", normalized.job_checklists.map(cleanJobChecklist));
-    await upsertRows("job_checklist_sections", normalized.job_checklist_sections.map(cleanJobChecklistSection));
-    await upsertRows("job_checklist_items", normalized.job_checklist_items.map(cleanJobChecklistItem));
+    const previous = previousState ? normalizeState(previousState) : {};
+    await saveChangedRows("suppliers", previous.suppliers, normalized.suppliers, cleanSupplier);
+    if (customersTableAvailable) await saveChangedRows("customers", previous.customers, normalized.customers, cleanCustomer);
+    await saveChangedDashboardRows("leads", previous.leads, normalized.leads, cleanLead);
+    await saveChangedDashboardRows("jobs", previous.jobs, normalized.jobs, cleanJob);
+    await saveChangedRows("categories", previous.categories, normalized.categories, cleanCategory);
+    await saveChangedRows("items", previous.items, normalized.items, cleanItem);
+    await saveChangedRows("checklist_templates", previous.checklist_templates, normalized.checklist_templates, cleanChecklistTemplate);
+    await saveChangedRows("checklist_template_sections", previous.checklist_template_sections, normalized.checklist_template_sections, cleanChecklistTemplateSection);
+    await saveChangedRows("checklist_template_items", previous.checklist_template_items, normalized.checklist_template_items, cleanChecklistTemplateItem);
+    await saveChangedRows("job_checklists", previous.job_checklists, normalized.job_checklists, cleanJobChecklist);
+    await saveChangedRows("job_checklist_sections", previous.job_checklist_sections, normalized.job_checklist_sections, cleanJobChecklistSection);
+    await saveChangedRows("job_checklist_items", previous.job_checklist_items, normalized.job_checklist_items, cleanJobChecklistItem);
     if (workshopTablesAvailable) {
-      await upsertRows("job_files", normalized.job_files.map(cleanJobFile));
-      await upsertRows("cut_patterns", normalized.cut_patterns.map(cleanCutPattern));
-      await upsertRows("cut_pattern_revisions", normalized.cut_pattern_revisions.map(cleanCutPatternRevision));
-      await upsertRows("cut_runs", normalized.cut_runs.map(cleanCutRun));
-      await upsertRows("cut_part_suggestions", normalized.cut_part_suggestions.map(cleanCutPartSuggestion));
-      await upsertRows("remake_requests", normalized.remake_requests.map(cleanRemakeRequest));
-      await upsertRows("activity_history", normalized.activity_history.map(cleanActivityHistory));
+      await saveChangedRows("job_files", previous.job_files, normalized.job_files, cleanJobFile);
+      await saveChangedRows("cut_patterns", previous.cut_patterns, normalized.cut_patterns, cleanCutPattern);
+      await saveChangedRows("cut_pattern_revisions", previous.cut_pattern_revisions, normalized.cut_pattern_revisions, cleanCutPatternRevision);
+      await saveChangedRows("cut_runs", previous.cut_runs, normalized.cut_runs, cleanCutRun);
+      await saveChangedRows("cut_part_suggestions", previous.cut_part_suggestions, normalized.cut_part_suggestions, cleanCutPartSuggestion);
+      await saveChangedRows("remake_requests", previous.remake_requests, normalized.remake_requests, cleanRemakeRequest);
+      await saveChangedRows("activity_history", previous.activity_history, normalized.activity_history, cleanActivityHistory);
+    }
+    return normalized;
+  }
+
+  async function saveChangedRows(table, previousRows = [], nextRows = [], cleaner) {
+    for (const { row, cleaned, previous } of changedRecordRows(previousRows, nextRows, cleaner)) {
+      await saveRecord(table, row, cleaned, previous);
     }
   }
 
-  async function upsertRows(table, rows) {
-    if (!rows.length) return;
-    const { error } = await client.from(table).upsert(rows, { onConflict: "id" });
-    if (error) throw error;
-  }
-
-  async function upsertDashboardAwareRows(table, rows) {
+  async function saveChangedDashboardRows(table, previousRows, nextRows, cleaner) {
     if (!dashboardColumnsAvailable) {
-      await upsertRows(table, rows.map(stripDashboardColumns));
+      await saveChangedRows(table, previousRows, nextRows, (row) => stripDashboardColumns(cleaner(row)));
       return;
     }
     try {
-      await upsertRows(table, rows);
+      await saveChangedRows(table, previousRows, nextRows, cleaner);
     } catch (error) {
       if (!isMissingDashboardColumnError(error)) throw error;
       dashboardColumnsAvailable = false;
       backendStatus.message = "Synced without dashboard planning fields; run supabase-dashboard-migration.sql";
-      await upsertRows(table, rows.map(stripDashboardColumns));
+      await saveChangedRows(table, previousRows, nextRows, (row) => stripDashboardColumns(cleaner(row)));
     }
+  }
+
+  async function saveRecord(table, row, cleaned, previous) {
+    if (!previous) {
+      const { data, error } = await client.from(table).insert(cleaned).select("*");
+      if (error) throw error;
+      if (data?.[0]) Object.assign(row, data[0]);
+      return;
+    }
+    if (!previous.updated_at) throw new Error(`Cannot safely update ${table}/${row.id}: missing updated_at.`);
+    const { data, error } = await client
+      .from(table)
+      .update(cleaned)
+      .eq("id", row.id)
+      .eq("updated_at", previous.updated_at)
+      .select("*");
+    if (error) throw error;
+    if (!data?.length) throw new Error(`Concurrent update detected for ${table}/${row.id}; reload before saving.`);
+    Object.assign(row, data[0]);
   }
 
   return {
@@ -1315,7 +1390,7 @@ function createSupabaseStore(config) {
         state: remoteState,
       };
     },
-    saveState: saveFullState,
+    saveState: saveChangedState,
     async deleteItem(id) {
       const { error } = await client.from("items").update({ status: "cancelled" }).eq("id", id);
       if (error) throw error;
@@ -1419,6 +1494,7 @@ function cleanJob(item) {
     next_action: item.next_action || null,
     next_action_due_date: item.next_action_due_date || null,
     target_install_date: item.target_install_date || null,
+    customer_id: item.customer_id || null,
     active: item.active !== false,
     created_at: item.created_at,
     updated_at: item.updated_at,
@@ -1458,6 +1534,11 @@ function isMissingWorkshopTableError(error) {
     "does not exist",
     "schema cache",
   ].some((part) => message.includes(part));
+}
+
+function isMissingCustomerTableError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return message.includes("customers") && (message.includes("does not exist") || message.includes("schema cache"));
 }
 
 function cleanCategory(item) {
@@ -1589,6 +1670,24 @@ function cleanJobFile(item) {
     archived_at: item.archived_at || null,
     archived_by: item.archived_by || null,
     archived_reason: item.archived_reason || null,
+  });
+}
+
+function cleanCustomer(item) {
+  return pickDefined({
+    id: item.id,
+    customer_number: item.customer_number || "",
+    display_name: item.display_name || "",
+    company_name: item.company_name || null,
+    phone: item.phone || null,
+    email: item.email || null,
+    address: item.address || null,
+    notes: item.notes || null,
+    active: item.active !== false,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+    created_by: item.created_by || null,
+    updated_by: item.updated_by || null,
   });
 }
 
@@ -1777,6 +1876,23 @@ function createLead(input) {
   };
 }
 
+function createCustomer(input) {
+  const now = nowIso();
+  return {
+    id: uid("customer"),
+    customer_number: input.customer_number?.trim() || "",
+    display_name: input.display_name?.trim() || "",
+    company_name: input.company_name?.trim() || "",
+    phone: input.phone?.trim() || "",
+    email: input.email?.trim() || "",
+    address: input.address?.trim() || "",
+    notes: input.notes || "",
+    active: input.active !== false && input.active !== "false",
+    created_at: now,
+    updated_at: now,
+  };
+}
+
 function createJobFile(input) {
   const now = nowIso();
   return {
@@ -1932,6 +2048,9 @@ function render() {
     leads: renderLeads,
     lead: () => renderLeadDetail(route.id),
     leadform: () => renderLeadForm(route.params, route.id),
+    customers: renderCustomers,
+    customer: () => renderCustomerDetail(route.id),
+    customerform: () => renderCustomerForm(route.params, route.id),
     jobs: renderJobs,
     jobform: () => renderJobForm(route.params),
     job: () => renderJobDetail(route.id),
@@ -2032,6 +2151,8 @@ function getRoute() {
   if (parts[0] === "templates" && parts[1]) return { name: "template", section: "templates", id: parts[1], params };
   if (parts[0] === "leads" && parts[1]) return { name: "lead", section: "leads", id: parts[1], params };
   if (parts[0] === "leadform" && parts[1]) return { name: "leadform", section: "leads", id: parts[1], params };
+  if (parts[0] === "customers" && parts[1]) return { name: "customer", section: "customers", id: parts[1], params };
+  if (parts[0] === "customerform" && parts[1]) return { name: "customerform", section: "customers", id: parts[1], params };
   if (parts[0] === "remakeform" && parts[1]) return { name: "remakeform", section: "workshop", id: parts[1], params };
   if (parts[0] === "cutting" && parts[1]) return { name: "cutting", section: "workshop", id: parts[1], params };
   if (parts[0] === "suppliers" && parts[1]) return { name: "supplier", section: "suppliers", id: parts[1], params };
@@ -2067,6 +2188,25 @@ function leadById(id) {
 
 function jobById(id) {
   return state.jobs.find((item) => item.id === id);
+}
+
+function customerById(id) {
+  return state.customers.find((item) => item.id === id);
+}
+
+function customerLabel(customerItem) {
+  if (!customerItem) return "No customer linked";
+  return [customerItem.display_name, customerItem.company_name].filter(Boolean).join(" - ") || "Unnamed customer";
+}
+
+function customerOptions(selectedId = "") {
+  return [
+    ["", "No customer linked"],
+    ...state.customers
+      .filter((customerItem) => customerItem.active !== false || customerItem.id === selectedId)
+      .sort((a, b) => customerLabel(a).localeCompare(customerLabel(b)))
+      .map((customerItem) => [customerItem.id, customerLabel(customerItem)]),
+  ];
 }
 
 function categoryById(id) {
@@ -2635,6 +2775,119 @@ function renderLeads() {
   `;
 }
 
+function renderCustomers() {
+  const params = getRoute().params;
+  const showInactive = params.show === "inactive";
+  setTitle(showInactive ? "Inactive Customers" : "Customers");
+  const customers = state.customers
+    .filter((customerItem) => showInactive ? customerItem.active === false : customerItem.active !== false)
+    .sort((a, b) => customerLabel(a).localeCompare(customerLabel(b)));
+  const rows = customers.map((customerItem) => `
+    <a class="list-link mobile-list-card" href="#/customers/${customerItem.id}">
+      <span>
+        <strong>${escapeHtml(customerLabel(customerItem))}</strong><br>
+        <span class="muted">${escapeHtml([customerItem.customer_number, customerItem.phone, customerItem.email].filter(Boolean).join(" - ") || "No contact details")}</span>
+      </span>
+      <span class="mobile-card-end"><span class="count-pill">${state.jobs.filter((jobItem) => jobItem.customer_id === customerItem.id).length}</span><span aria-hidden="true">&rsaquo;</span></span>
+    </a>
+  `).join("");
+
+  app.innerHTML = `
+    <div class="stack mobile-page">
+      <section class="mobile-page-intro">
+        <div class="mobile-title-row"><div><p class="mobile-eyebrow">INTERNAL RECORDS</p><h2>${showInactive ? "Inactive customers" : "Customers"}</h2></div><a class="primary-action" href="#/customerform">+ New customer</a></div>
+        <p class="muted">Keep customer details separate from jobs and link them only when the internal workflow is ready.</p>
+      </section>
+      <section class="mobile-list-section">
+        <div class="section-heading"><h2>${showInactive ? "Inactive customers" : "Active customers"}</h2><span class="count-pill">${customers.length}</span></div>
+        <div class="list">${rows || empty(showInactive ? "No inactive customers." : "No customers yet.")}</div>
+      </section>
+      <a class="ghost-button full-width" href="#/customers${showInactive ? "" : "?show=inactive"}">${showInactive ? "Show active customers" : "View inactive customers"}</a>
+    </div>
+  `;
+}
+
+function renderCustomerDetail(id) {
+  const customerItem = customerById(id);
+  if (!customerItem) {
+    renderNotFound("Customer not found.");
+    return;
+  }
+  setTitle(customerLabel(customerItem));
+  const linkedJobs = state.jobs.filter((jobItem) => jobItem.customer_id === id).sort((a, b) => labelForJob(a).localeCompare(labelForJob(b)));
+  app.innerHTML = `
+    <div class="stack">
+      <div class="toolbar">
+        <a class="primary-action" href="#/customerform/${customerItem.id}">Edit customer</a>
+        <a class="ghost-button" href="#/customers">All customers</a>
+      </div>
+      <section class="panel">
+        <h2>Customer Details</h2>
+        <div class="list">
+          ${metricRow("Customer number", customerItem.customer_number || "Not assigned")}
+          ${metricRow("Name", customerItem.display_name || "Not set")}
+          ${metricRow("Company", customerItem.company_name || "Not set")}
+          ${metricRow("Phone", customerItem.phone || "Not set")}
+          ${metricRow("Email", customerItem.email || "Not set")}
+          ${metricRow("Address", customerItem.address || "Not set")}
+          ${metricRow("Status", customerItem.active === false ? "Inactive" : "Active")}
+        </div>
+        ${customerItem.notes ? `<p class="item-notes">${linkify(customerItem.notes)}</p>` : ""}
+      </section>
+      <section>
+        <div class="section-heading"><h2>Linked jobs</h2><span class="count-pill">${linkedJobs.length}</span></div>
+        <div class="list">${linkedJobs.map((jobItem) => `
+          <a class="list-link" href="#/jobs/${jobItem.id}">
+            <span><strong>${escapeHtml(labelForJob(jobItem))}</strong><br><span class="muted">${escapeHtml([jobItem.location, readable(jobItem.status)].filter(Boolean).join(" - ") || "Job")}</span></span>
+            <span aria-hidden="true">&rsaquo;</span>
+          </a>
+        `).join("") || empty("No jobs linked yet.")}</div>
+      </section>
+    </div>
+  `;
+}
+
+function renderCustomerForm(params = {}, id = null) {
+  const editing = id ? customerById(id) : null;
+  const customerItem = editing || createCustomer({});
+  setTitle(editing ? "Edit Customer" : "New Customer");
+  app.innerHTML = `
+    <form class="panel form-grid" id="customerForm">
+      <div class="full"><h2>${editing ? "Edit customer" : "Create customer"}</h2><p class="muted">Internal customer records only. Existing jobs are not changed automatically.</p></div>
+      ${field("Customer number", "customer_number", "text", customerItem.customer_number)}
+      ${field("Display name", "display_name", "text", customerItem.display_name, "full", true)}
+      ${field("Company", "company_name", "text", customerItem.company_name)}
+      ${field("Phone", "phone", "tel", customerItem.phone)}
+      ${field("Email", "email", "email", customerItem.email)}
+      ${field("Address", "address", "text", customerItem.address, "full")}
+      ${selectField("Status", "active", customerItem.active === false ? "false" : "true", [["true", "Active"], ["false", "Inactive"]])}
+      ${textareaField("Notes", "notes", customerItem.notes, "full")}
+      <div class="form-actions full">
+        <button class="primary-action" type="submit">Save customer</button>
+        <a class="ghost-button" href="${editing ? `#/customers/${editing.id}` : "#/customers"}">Cancel</a>
+      </div>
+    </form>
+  `;
+
+  document.getElementById("customerForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const nextValues = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (editing) {
+      Object.assign(editing, nextValues, {
+        active: nextValues.active !== "false",
+        updated_at: nowIso(),
+      });
+      saveState();
+      navigate(`/customers/${editing.id}`);
+      return;
+    }
+    const nextCustomer = createCustomer(nextValues);
+    state.customers.unshift(nextCustomer);
+    saveState();
+    navigate(`/customers/${nextCustomer.id}`);
+  });
+}
+
 function renderLeadDetail(id) {
   const leadItem = leadById(id);
   if (!leadItem) {
@@ -2854,7 +3107,7 @@ function renderJobs() {
         <a class="list-link mobile-list-card job-card" href="#/jobs/${jobItem.id}">
           <span>
             <strong>${escapeHtml(labelForJob(jobItem))}</strong><br>
-            <span class="muted">${escapeHtml([jobItem.job_number, jobItem.location, checklistMeta].filter(Boolean).join(" - ") || "Job")}</span>
+          <span class="muted">${escapeHtml([jobItem.job_number, customerLabel(customerById(jobItem.customer_id)), jobItem.location, checklistMeta].filter(Boolean).join(" - ") || "Job")}</span>
           </span>
           <span class="mobile-card-end"><span class="status-pill ${jobItem.priority === "urgent" ? "urgent" : ""}">${escapeHtml(readable(jobItem.status))}</span><span class="count-pill">${count}</span><span aria-hidden="true">&rsaquo;</span></span>
         </a>
@@ -2890,6 +3143,7 @@ function renderJobForm(params = {}) {
       </section>
       ${field("Client name", "client_name", "text", params.client || "", "full", true)}
       ${field("Job name", "job_name", "text", params.name || "", "full", true)}
+      ${selectField("Customer", "customer_id", params.customer_id || "", customerOptions())}
       ${field("Location", "location", "text", params.location || "", "full")}
       ${selectField("Starting stage", "status", params.status || "job_accepted", JOB_STAGE_OPTIONS)}
       ${selectField("Priority", "priority", params.priority || "normal", PRIORITY_OPTIONS)}
@@ -2917,6 +3171,7 @@ function renderJobForm(params = {}) {
     newJob.target_install_date = form.get("target_install_date") || "";
     newJob.next_action = form.get("next_action") || "";
     newJob.next_action_due_date = form.get("next_action_due_date") || "";
+    newJob.customer_id = form.get("customer_id") || null;
     newJob.active = newJob.status !== "archived";
     state.jobs.unshift(newJob);
     saveState();
@@ -2931,6 +3186,7 @@ function renderJobDetail(id) {
     return;
   }
   setTitle(labelForJob(jobItem));
+  const customerItem = customerById(jobItem.customer_id);
   const items = activeItems().filter((item) => item.job_id === id).sort(sortBySupplierThenName);
   const grouped = groupBy(items, (item) => supplierById(item.supplier_id)?.supplier_name || "No supplier");
   const qcWarning = jobNeedsQcWarning(id);
@@ -2946,6 +3202,9 @@ function renderJobDetail(id) {
       </div>
       <section class="panel">
         <h2>Job Stage</h2>
+        <div class="list">
+          <div class="list-link"><strong>Customer</strong><span>${customerItem ? `<a href="#/customers/${customerItem.id}">${escapeHtml(customerLabel(customerItem))}</a>` : "No customer linked"}</span></div>
+        </div>
         <form class="inline-form" id="jobStageForm">
           ${selectField("Current stage", "status", jobItem.status || "active", JOB_STAGE_OPTIONS)}
           <button class="primary-action" type="submit">Update</button>
@@ -2954,6 +3213,7 @@ function renderJobDetail(id) {
       <section class="panel">
         <h2>Next Action</h2>
         <form class="form-grid" id="jobPlanningForm">
+          ${selectField("Customer", "customer_id", jobItem.customer_id || "", customerOptions(jobItem.customer_id || ""))}
           ${selectField("Priority", "priority", jobItem.priority || "normal", PRIORITY_OPTIONS)}
           ${field("Target install date", "target_install_date", "date", jobItem.target_install_date || "")}
           ${field("Next action", "next_action", "text", jobItem.next_action || "", "full")}
@@ -3092,6 +3352,7 @@ function updateJobPlanning(jobId, values) {
   const jobItem = jobById(jobId);
   if (!jobItem) return;
   Object.assign(jobItem, {
+    customer_id: values.customer_id || null,
     priority: values.priority || "normal",
     target_install_date: values.target_install_date || "",
     next_action: values.next_action || "",
