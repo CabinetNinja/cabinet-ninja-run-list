@@ -1,6 +1,18 @@
 # Cabinet Ninja Phase 1B production deployment runbook
 
-This runbook is review material only. It was not executed against production. Do not run a production command until Adam gives the stated GO approval.
+This runbook contains the controlled production procedure and the completed execution record below. The procedure is not authority for any future production change; obtain a new scoped approval before reusing it.
+
+## Completed execution record — 2026-08-14
+
+Evidence capture timestamp: `2026-08-14T15:55:29+12:00` (Pacific/Auckland). Adam accepted the Free-plan/no-PITR manual-backup risk, approved the current NZ-time cutover window, named himself rollback operator, and gave `Final production GO: Yes`.
+
+- Project verified: `xoyzmjbjbaknvgtoofar`.
+- `202607240003_replace_unrestricted_rls.sql` applied successfully. Owner/Admin access passed; unassigned access was denied; client DELETE privileges were absent; approved CNC role boundaries and RLS passed.
+- `202607240004_dashboard_schema_drift_repair.sql` applied successfully. Seven dashboard columns, three indexes, and `leads.priority NOT NULL` verified.
+- Permission, upgrade/idempotency, PWA, Node (19/19), login-containment (1/1), and fixed 900-second signed-URL checks passed before private Storage.
+- `202607240005_private_job_files.sql` applied successfully only after those checks. `job-files` is private; intended Storage policy count is two; Storage DELETE policy count is zero; legacy policies are absent.
+- Post-cutover inventory is unchanged: 22 objects, `9,451,630` bytes, 12 `.nc` files and 10 PDFs; no path or object mutation occurred. Backup manifest SHA-256: `2582D15385ACD9BD2FEA7D1A83561668038C4C7E462C4E1D4D7F7F1971138D2E`.
+- Live authenticated Workshop smoke passed for Run List data, one PDF, and one `.nc` CNC file. No rollback was required; Adam remains rollback operator and restoration owner.
 
 ## Required access and prerequisites
 
