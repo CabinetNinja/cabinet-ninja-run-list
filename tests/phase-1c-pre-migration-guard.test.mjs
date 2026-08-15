@@ -32,8 +32,8 @@ test("customer routes and controls are hard-blocked before migration", () => {
   assert.match(appSource, /isCustomerRoute\(route\) && !customerFeaturesAvailable\(\)/);
   assert.match(appSource, /renderCustomerMigrationBlocked\(\);\s*return;/);
   assert.match(appSource, /data-customer-nav/);
-  assert.match(appSource, /customerFeaturesAvailable\(\) \? selectField\("Customer"/);
-  assert.match(appSource, /if \(customerFeaturesAvailable\(\)\) changes\.customer_id/);
+  assert.match(appSource, /canManageCustomerLinks\(\) && customerFeaturesAvailable\(\) \? selectField\("Customer"/);
+  assert.match(appSource, /if \(canManageCustomerLinks\(\) && customerFeaturesAvailable\(\)\) changes\.customer_id/);
   assert.match(appSource, /if \(!includeCustomerLink\) delete cleaned\.customer_id/);
 });
 

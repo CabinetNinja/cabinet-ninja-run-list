@@ -13,13 +13,15 @@ test("internal customer workflow is present without automatic job backfill", () 
     "#/customerform",
     "#/customers/${customerItem.id}",
     'selectField("Customer", "customer_id"',
-    "if (customerFeaturesAvailable()) changes.customer_id = values.customer_id || null",
+    "if (canManageCustomerLinks() && customerFeaturesAvailable()) changes.customer_id = values.customer_id || null",
     "function saveRecord(table, row, cleaned, previous)",
     "Concurrent update detected",
   ]) {
     assert.match(appSource, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.doesNotMatch(migrationSource, /UPDATE\s+public\.jobs\s+SET\s+customer_id/i);
+  assert.match(appSource, /Manual customer reference \(optional\)/);
+  assert.match(migrationSource, /where customer_number <> ''/i);
 });
 
 test("customer foundation keeps the internal-only boundary", () => {

@@ -8,9 +8,11 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 function Invoke-LocalSql([string]$Sql) {
-  $value = & docker exec $Container psql -v ON_ERROR_STOP=1 -q -t -A -U postgres -d postgres -c $Sql
-  if ($LASTEXITCODE -ne 0) { throw "Local database query failed." }
-  return ($value -join "").Trim()
+  $value = & docker exec $Container psql -v ON_ERROR_STOP=1 -q -t -A -U postgres -d postgres -c $Sql 2>&1
+  $exitCode = $LASTEXITCODE
+  $text = ($value | ForEach-Object { $_.ToString() }) -join "`n"
+  if ($exitCode -ne 0 -or $text -match '(?m)^ERROR:') { throw "Local database query failed: $text" }
+  return $text.Trim()
 }
 
 function Invoke-LocalMigration([string]$Name) {
@@ -36,8 +38,11 @@ $setup = @"
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-000000000000', '11111111-1111-1111-1111-111111111111', 'authenticated', 'authenticated', 'owner-admin@test.invalid', 'not-used', now(), '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-000000000000', '22222222-2222-2222-2222-222222222222', 'authenticated', 'authenticated', 'workshop@test.invalid', 'not-used', now(), '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-000000000000', '33333333-3333-3333-3333-333333333333', 'authenticated', 'authenticated', 'unassigned@test.invalid', 'not-used', now(), '{}', '{}', now(), now())
+  ('00000000-0000-0000-0000-000000000000', '22222222-2222-2222-2222-222222222222', 'authenticated', 'authenticated', 'office@test.invalid', 'not-used', now(), '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '33333333-3333-3333-3333-333333333333', 'authenticated', 'authenticated', 'workshop@test.invalid', 'not-used', now(), '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '44444444-4444-4444-4444-444444444444', 'authenticated', 'authenticated', 'install@test.invalid', 'not-used', now(), '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '55555555-5555-5555-5555-555555555555', 'authenticated', 'authenticated', 'read-only@test.invalid', 'not-used', now(), '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '66666666-6666-6666-6666-666666666666', 'authenticated', 'authenticated', 'unassigned@test.invalid', 'not-used', now(), '{}', '{}', now(), now())
 on conflict (id) do nothing;
 insert into public.suppliers (id, supplier_name) values ('phase-1c-supplier', 'Phase 1C supplier') on conflict (id) do nothing;
 insert into public.jobs (id, job_number, client_name, job_name, location, status, active) values ('phase-1c-job', 'CN-9101', 'Existing client', 'Existing job', 'Existing location', 'active', true) on conflict (id) do nothing;
@@ -48,7 +53,7 @@ $before = Invoke-LocalSql "select id || '|' || job_number from public.jobs where
 if ($before -ne "phase-1c-job|CN-9101") { throw "Phase 1C fixture did not preserve the existing job shape." }
 
 Invoke-LocalMigration "202607240002_role_profile_foundation.sql"
-Invoke-LocalSql "insert into public.staff_profiles (user_id, role, active) values ('11111111-1111-1111-1111-111111111111', 'owner_admin', true), ('22222222-2222-2222-2222-222222222222', 'workshop', true);" | Out-Null
+Invoke-LocalSql "insert into public.staff_profiles (user_id, role, active) values ('11111111-1111-1111-1111-111111111111', 'owner_admin', true), ('22222222-2222-2222-2222-222222222222', 'office', true), ('33333333-3333-3333-3333-333333333333', 'workshop', true), ('44444444-4444-4444-4444-444444444444', 'install', true), ('55555555-5555-5555-5555-555555555555', 'read_only', true);" | Out-Null
 Invoke-LocalMigration "202607240003_replace_unrestricted_rls.sql"
 Invoke-LocalMigration "202607240004_dashboard_schema_drift_repair.sql"
 Invoke-LocalMigration "202607240005_private_job_files.sql"
@@ -66,9 +71,9 @@ if ($existingCustomerLink -ne "<null>") { throw "Phase 1C unexpectedly backfille
 $customerColumns = Invoke-LocalSql @"
 select count(*) from information_schema.columns
 where table_schema = 'public' and table_name = 'customers'
-and column_name in ('id','customer_number','display_name','company_name','phone','email','address','notes','active','created_at','updated_at');
+and column_name in ('id','customer_number','display_name','company_name','phone','email','address','notes','active','created_at','updated_at','created_by','updated_by');
 "@
-if ($customerColumns -ne "11") { throw "Customer foundation table is missing expected columns." }
+if ($customerColumns -ne "13") { throw "Customer foundation table is missing expected columns." }
 
 $customerIdNullable = Invoke-LocalSql "select is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'jobs' and column_name = 'customer_id';"
 if ($customerIdNullable -ne "YES") { throw "jobs.customer_id is not nullable." }
@@ -100,6 +105,23 @@ commit;
 "@
 Invoke-LocalSql $ownerInsert | Out-Null
 
+$ownerAudit = Invoke-LocalSql "select created_by::text || '|' || updated_by::text from public.customers where id = 'phase-1c-customer';"
+if ($ownerAudit -ne "11111111-1111-1111-1111-111111111111|11111111-1111-1111-1111-111111111111") { throw "Customer audit fields were not populated from the authenticated user." }
+
+$duplicateRejected = $false
+try {
+  Invoke-LocalSql @"
+begin;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '11111111-1111-1111-1111-111111111111';
+insert into public.customers (id, customer_number, display_name) values ('phase-1c-duplicate', 'CUST-0001', 'Duplicate reference');
+rollback;
+"@ | Out-Null
+} catch {
+  $duplicateRejected = $true
+}
+if (-not $duplicateRejected) { throw "Duplicate non-empty customer references were accepted." }
+
 $ownerUpdate = @"
 begin;
 set local role authenticated;
@@ -114,16 +136,24 @@ if ($editedCustomer -ne "Phase 1C edited customer") { throw "An authorised inter
 $workshopRead = Invoke-LocalSql @"
 begin;
 set local role authenticated;
-set local "request.jwt.claim.sub" = '22222222-2222-2222-2222-222222222222';
+set local "request.jwt.claim.sub" = '33333333-3333-3333-3333-333333333333';
 select count(*) from public.customers;
 rollback;
 "@
 if ($workshopRead -ne "1") { throw "An assigned internal Workshop user could not read internal customer data." }
 
+Invoke-LocalSql @"
+begin;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '11111111-1111-1111-1111-111111111111';
+insert into public.customers (id, customer_number, display_name) values ('phase-1c-other-customer', 'CUST-0002', 'Phase 1C other customer');
+commit;
+"@ | Out-Null
+
 $unassignedRead = Invoke-LocalSql @"
 begin;
 set local role authenticated;
-set local "request.jwt.claim.sub" = '33333333-3333-3333-3333-333333333333';
+set local "request.jwt.claim.sub" = '66666666-6666-6666-6666-666666666666';
 select count(*) from public.customers;
 rollback;
 "@
@@ -140,4 +170,94 @@ rollback;
 $linkedCustomer = Invoke-LocalSql $ownerLink
 if ($linkedCustomer -ne "phase-1c-customer") { throw "An authorised internal user could not link a customer to an existing job." }
 
-Write-Output "Phase 1C upgrade test passed: customers foundation is additive, internal-only, indexed, nullable-linked, and idempotent; existing job identity and CN-#### number preserved."
+$officeLink = Invoke-LocalSql @"
+begin;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '22222222-2222-2222-2222-222222222222';
+update public.jobs set customer_id = 'phase-1c-customer' where id = 'phase-1c-job';
+select coalesce(customer_id, '<null>') from public.jobs where id = 'phase-1c-job';
+rollback;
+"@
+if ($officeLink -ne "phase-1c-customer") { throw "Office could not write a job customer link." }
+
+$managerClear = Invoke-LocalSql @"
+begin;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '11111111-1111-1111-1111-111111111111';
+update public.jobs set customer_id = 'phase-1c-customer' where id = 'phase-1c-job';
+select coalesce(customer_id, '<null>') from public.jobs where id = 'phase-1c-job';
+rollback;
+"@
+if ($managerClear -ne "phase-1c-customer") { throw "Owner/Admin could not write a job customer link." }
+
+$ownerLinkCommit = @"
+begin;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '11111111-1111-1111-1111-111111111111';
+update public.jobs set customer_id = 'phase-1c-customer' where id = 'phase-1c-job';
+commit;
+"@
+Invoke-LocalSql $ownerLinkCommit | Out-Null
+
+$officeClear = Invoke-LocalSql @"
+begin;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '22222222-2222-2222-2222-222222222222';
+update public.jobs set customer_id = null where id = 'phase-1c-job';
+select coalesce(customer_id, '<null>') from public.jobs where id = 'phase-1c-job';
+rollback;
+"@
+if ($officeClear -ne "<null>") { throw "Office could not clear a job customer link." }
+
+function Assert-RoleCannotChangeCustomerLink([string]$RoleLabel, [string]$UserId) {
+  foreach ($CustomerValue in @("null", "'phase-1c-other-customer'")) {
+    $beforeLink = Invoke-LocalSql "select coalesce(customer_id, '<null>') from public.jobs where id = 'phase-1c-job';"
+    $writeResult = $null
+    $errorMessage = $null
+    try {
+      $writeResult = Invoke-LocalSql @"
+begin;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '$UserId';
+with changed as (
+  update public.jobs set customer_id = $CustomerValue where id = 'phase-1c-job' returning id
+)
+select count(*) from changed;
+rollback;
+"@
+    } catch {
+      $errorMessage = $_.Exception.Message
+    }
+    if ($errorMessage) {
+      if ($errorMessage -notmatch 'Only Owner/Admin or Office may change a job customer link') {
+        throw "$RoleLabel customer-link write failed for an unexpected reason: $errorMessage"
+      }
+    } elseif ($RoleLabel -in @('Workshop', 'Install')) {
+      throw "$RoleLabel customer-link write did not reach the customer-link boundary."
+    } elseif ($writeResult -ne '0') {
+      throw "$RoleLabel was able to change jobs.customer_id to $CustomerValue."
+    }
+    $afterLink = Invoke-LocalSql "select coalesce(customer_id, '<null>') from public.jobs where id = 'phase-1c-job';"
+    if ($afterLink -ne $beforeLink) { throw "$RoleLabel customer-link rejection changed jobs.customer_id." }
+  }
+}
+
+Assert-RoleCannotChangeCustomerLink "Workshop" "33333333-3333-3333-3333-333333333333"
+Assert-RoleCannotChangeCustomerLink "Install" "44444444-4444-4444-4444-444444444444"
+Assert-RoleCannotChangeCustomerLink "Read-only" "55555555-5555-5555-5555-555555555555"
+Assert-RoleCannotChangeCustomerLink "Unassigned" "66666666-6666-6666-6666-666666666666"
+
+$anonJobUpdate = Invoke-LocalSql "select has_table_privilege('anon', 'public.jobs', 'update');"
+if ($anonJobUpdate -ne "f") { throw "Anonymous users retain update privilege on jobs." }
+
+$ownerClear = Invoke-LocalSql @"
+begin;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '11111111-1111-1111-1111-111111111111';
+update public.jobs set customer_id = null where id = 'phase-1c-job';
+select coalesce(customer_id, '<null>') from public.jobs where id = 'phase-1c-job';
+commit;
+"@
+if ($ownerClear -ne "<null>") { throw "Owner/Admin could not clear a job customer link." }
+
+Write-Output "Phase 1C upgrade test passed: additive customer foundation, manual-reference collision guard, authenticated audit fields, nullable link, role-bound linking, idempotent rerun, and existing job identity/CN-#### preservation verified."

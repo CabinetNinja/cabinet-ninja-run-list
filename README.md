@@ -67,13 +67,13 @@ Run `supabase-dashboard-migration.sql` once on existing projects to add next-act
 
 Run `supabase-workshop-cnc-migration.sql` once on existing projects to add the Workshop/CNC cut pattern, file import, physical run, remake, and activity-history tables. It also creates the current public Supabase Storage bucket named `job-files` for uploaded Mozaik PDFs and CNC files. Under the reviewed Phase 1B target, `.nc` is an explicit internal production-file type for Owner/Admin and Workshop; `.cnc`, `.tap`, and `.gcode` remain filename/version references, and the bucket is made private only during the separately approved cutover.
 
-## Security foundation (not deployed)
+## Security foundation and rollout status
 
 The Phase 1A production audit confirmed that the historical scripts above describe an unrestricted authenticated-user model and a public `job-files` bucket. Do not rerun those legacy scripts against the verified production project.
 
-The reviewed Phase 1B migrations in `supabase/migrations/202607240002` through `202607240005` are source-controlled future changes only. They must not be pushed or applied until Adam has approved the documented role assignment, data-access, backup, and after-hours Storage cutover decisions in `PHASE-1B-SECURITY-FOUNDATION.md` and `PROPOSED-ACCESS-MODEL.md`.
+Phase 1B production rollout is complete and recorded in `PHASE-1B-PRODUCTION-PREFLIGHT.md`: migrations `202607240002` through `202607240005`, the Owner/Admin bootstrap, and the reviewed private `job-files` access path were applied and verified. Existing jobs, IDs, CN numbers, and files were preserved; no invitations or email were sent.
 
-The exact production order, STOP/GO points, backup evidence, verification queries, and rollback scripts are documented in `PHASE-1B-DEPLOYMENT-RUNBOOK.md`.
+Phase 1C customer foundation remains local implementation only. Do not apply its migration to production from this branch. The exact Phase 1B production order, STOP/GO points, backup evidence, verification queries, and rollback scripts remain documented in `PHASE-1B-DEPLOYMENT-RUNBOOK.md`.
 
 ## Running locally
 

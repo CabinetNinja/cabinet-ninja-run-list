@@ -1918,7 +1918,7 @@ a.plain-button {
   }
 
   .bottom-nav {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     min-height: 70px;
     padding: 4px 4px env(safe-area-inset-bottom);
     box-shadow: 0 -8px 24px rgba(23, 33, 31, .06);

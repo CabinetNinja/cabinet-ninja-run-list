@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Net.Http
+$repoRoot = Split-Path -Parent $PSScriptRoot
 
 function Invoke-LocalHttp([string]$Uri, [string]$Method, [string]$Body, [string]$ApiKey, [string]$AccessToken = "") {
   $client = [System.Net.Http.HttpClient]::new()
@@ -36,11 +37,44 @@ if (-not (docker ps --format '{{.Names}}' | Select-String -SimpleMatch $Containe
 $statusEnv = & $SupabaseCli status -o env
 $apiUrl = (($statusEnv | Where-Object { $_ -match '^API_URL=' } | Select-Object -First 1) -replace '^API_URL=', '').Trim('"')
 $anonKey = (($statusEnv | Where-Object { $_ -match '^ANON_KEY=' } | Select-Object -First 1) -replace '^ANON_KEY=', '').Trim('"')
-if (-not $apiUrl -or -not $anonKey) { throw "Could not read local Supabase API settings." }
+$serviceRoleKey = (($statusEnv | Where-Object { $_ -match '^SERVICE_ROLE_KEY=' } | Select-Object -First 1) -replace '^SERVICE_ROLE_KEY=', '').Trim('"')
+if (-not $apiUrl -or -not $anonKey -or -not $serviceRoleKey) { throw "Could not read local Supabase API settings." }
 
 $functionUrl = "$apiUrl/functions/v1/job-file-url"
-$noAuth = Invoke-LocalHttp $functionUrl "POST" '{"fileId":"phase-1b-job-file"}' $anonKey
-if ($noAuth.Status -ne 401) { throw "Unsigned request did not receive 401." }
+$functionProcess = $null
+$serveLogStem = Join-Path ([System.IO.Path]::GetTempPath()) ("cabinet-ninja-job-file-url-" + [guid]::NewGuid().ToString("N"))
+$serveOutput = "$serveLogStem.out.log"
+$serveError = "$serveLogStem.err.log"
+$serveEnvFile = "$serveLogStem.env"
+$envContents = @(
+  "SUPABASE_ANON_KEY=$anonKey",
+  "SUPABASE_SERVICE_ROLE_KEY=$serviceRoleKey"
+) -join [Environment]::NewLine
+[System.IO.File]::WriteAllText($serveEnvFile, $envContents)
+$workshopId = ""
+$ownerId = ""
+$officeId = ""
+$installId = ""
+$readOnlyId = ""
+$unassignedId = ""
+try {
+  $functionProcess = Start-Process -FilePath $SupabaseCli -ArgumentList "functions serve --no-verify-jwt --env-file `"$serveEnvFile`"" -WorkingDirectory $repoRoot -WindowStyle Hidden -RedirectStandardOutput $serveOutput -RedirectStandardError $serveError -PassThru
+
+  $noAuth = $null
+  for ($attempt = 0; $attempt -lt 30; $attempt++) {
+    if ($functionProcess.HasExited) {
+      $details = if (Test-Path -LiteralPath $serveError) { (Get-Content -LiteralPath $serveError -Raw).Trim() } else { "" }
+      throw "Local Edge Function server exited before becoming ready. $details"
+    }
+    try {
+      $noAuth = Invoke-LocalHttp $functionUrl "POST" '{"fileId":"phase-1b-job-file"}' $anonKey
+      if ($noAuth.Status -eq 401) { break }
+    } catch {
+      $noAuth = $null
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not $noAuth -or $noAuth.Status -ne 401) { throw "Unsigned request did not receive 401." }
 
 $suffix = [guid]::NewGuid().ToString("N")
 $password = "Local-only-$suffix!"
@@ -68,7 +102,6 @@ $officeId = $officeSession.user.id
 $installId = $installSession.user.id
 $readOnlyId = $readOnlySession.user.id
 $unassignedId = $unassignedSession.user.id
-try {
   $assignSql = "insert into public.staff_profiles (user_id, role, active) values ('$workshopId', 'workshop', true), ('$ownerId', 'owner_admin', true), ('$officeId', 'office', true), ('$installId', 'install', true), ('$readOnlyId', 'read_only', true);"
   & docker exec $Container psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres -c $assignSql
   if ($LASTEXITCODE -ne 0) { throw "Could not assign the local Workshop test role." }
@@ -113,8 +146,12 @@ try {
   $payload = $authorised.Body | ConvertFrom-Json
   if ($payload.expiresIn -ne 900 -or -not $payload.url) { throw "Signed URL response did not have a fixed 15-minute expiry and URL." }
 } finally {
-  $cleanupSql = "delete from public.staff_profiles where user_id in ('$workshopId', '$ownerId', '$officeId', '$installId', '$readOnlyId', '$unassignedId'); delete from auth.users where id in ('$workshopId', '$ownerId', '$officeId', '$installId', '$readOnlyId', '$unassignedId');"
-  & docker exec $Container psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres -c $cleanupSql 2>$null
+  if ($functionProcess -and -not $functionProcess.HasExited) { Stop-Process -Id $functionProcess.Id -Force }
+  if ($workshopId -and $ownerId -and $officeId -and $installId -and $readOnlyId -and $unassignedId) {
+    $cleanupSql = "delete from public.staff_profiles where user_id in ('$workshopId', '$ownerId', '$officeId', '$installId', '$readOnlyId', '$unassignedId'); delete from auth.users where id in ('$workshopId', '$ownerId', '$officeId', '$installId', '$readOnlyId', '$unassignedId');"
+    & docker exec $Container psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres -c $cleanupSql 2>$null
+  }
+  Remove-Item -LiteralPath $serveOutput, $serveError, $serveEnvFile -Force -ErrorAction SilentlyContinue
 }
 
 Write-Output "Local Edge Function authorisation and fixed 15-minute signed-URL checks passed."

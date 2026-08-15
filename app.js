@@ -49,6 +49,7 @@ const CLOSED_LEAD_STATUSES = new Set(["job_accepted", "job_declined", "accepted"
 const JOB_NUMBER_PREFIX = "CN";
 const LEAD_NUMBER_PREFIX = "CNL";
 const TRACKING_NUMBER_PAD = 4;
+const CUSTOMER_MANAGER_ROLES = new Set(["owner_admin", "office"]);
 
 const CNC_FILE_EXTENSIONS = new Set(["nc", "cnc", "tap", "gcode"]);
 const JOB_FILE_MAX_BYTES = 50 * 1024 * 1024;
@@ -339,8 +340,13 @@ let backendStatus = {
   mode: "local",
   message: "Local browser storage",
   userEmail: "",
+  userId: "",
+  role: "",
 };
 let remoteSaveQueue = Promise.resolve();
+let syncConflict = null;
+let authenticatedUserId = "";
+let authenticatedRole = "";
 let dashboardColumnsAvailable = true;
 let workshopTablesAvailable = true;
 let customersTableAvailable = true;
@@ -382,11 +388,15 @@ async function initializeApp() {
     mode: loaded.mode,
     message: loaded.message,
     userEmail: loaded.userEmail || "",
+    userId: loaded.userId || "",
+    role: loaded.role || "",
     authRequired: loaded.authRequired || false,
   };
+  authenticatedUserId = loaded.userId || "";
+  authenticatedRole = loaded.role || "";
 
   if (loaded.authRequired) {
-    state = loadLocalState(false);
+    state = loaded.state;
     renderAuthScreen();
     return;
   }
@@ -1118,21 +1128,32 @@ function ensureDefaultChecklistTemplates(data) {
 }
 
 function saveState(nextState = state) {
-  const localSnapshot = dataStore?.mode === "supabase" && !customerFeaturesAvailable()
-    ? stripCustomerMigrationData(nextState)
-    : cloneState(nextState);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(localSnapshot));
-  if (dataStore?.saveState) {
-    const snapshot = cloneState(nextState);
-    remoteSaveQueue = remoteSaveQueue
-      .then(async () => {
-        lastSyncedState = await dataStore.saveState(snapshot, lastSyncedState ? cloneState(lastSyncedState) : null);
-      })
-      .catch((error) => {
-        backendStatus.message = `Sync error: ${error.message}`;
-        toast(backendStatus.message);
-      });
+  if (!dataStore?.saveState) {
+    persistAuthoritativeState(nextState);
+    return Promise.resolve(cloneState(nextState));
   }
+
+  const snapshot = cloneState(nextState);
+  const operation = remoteSaveQueue.then(async () => {
+    if (syncConflict) throw new Error("Resolve the current sync conflict before saving again.");
+    const saved = await dataStore.saveState(snapshot, lastSyncedState ? cloneState(lastSyncedState) : null);
+    lastSyncedState = cloneState(saved);
+    persistAuthoritativeState(saved);
+    return saved;
+  });
+
+  remoteSaveQueue = operation.catch((error) => {
+    if (isConcurrencyError(error)) {
+      syncConflict = { attemptedState: snapshot, error };
+    }
+    restoreAuthoritativeState();
+    backendStatus.message = syncConflict
+      ? "Conflict detected. Reload server data or deliberately reapply the rejected edit before saving again."
+      : `Sync error: ${error.message}`;
+    toast(backendStatus.message);
+    render();
+  });
+  return operation;
 }
 
 function cloneState(value) {
@@ -1148,6 +1169,66 @@ function changedRecordRows(previousRows = [], nextRows = [], cleaner = (row) => 
 
 function customerFeaturesAvailable() {
   return customersTableAvailable && customerLinkColumnAvailable;
+}
+
+function isSupabaseMode() {
+  return (dataStore?.mode || backendStatus.mode) === "supabase";
+}
+
+function currentUserId() {
+  return authenticatedUserId || backendStatus.userId || "";
+}
+
+function currentUserRole() {
+  return authenticatedRole || backendStatus.role || "";
+}
+
+function canManageCustomers() {
+  return !isSupabaseMode() || CUSTOMER_MANAGER_ROLES.has(currentUserRole());
+}
+
+function canManageCustomerLinks() {
+  return canManageCustomers();
+}
+
+function persistAuthoritativeState(nextState) {
+  const localSnapshot = isSupabaseMode() && !customerFeaturesAvailable()
+    ? stripCustomerMigrationData(nextState)
+    : cloneState(nextState);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(localSnapshot));
+}
+
+function restoreAuthoritativeState() {
+  if (!lastSyncedState) return;
+  state = cloneState(lastSyncedState);
+  persistAuthoritativeState(state);
+}
+
+function isConcurrencyError(error) {
+  return `${error?.message || ""}`.includes("Concurrent update detected");
+}
+
+function renderSyncConflict() {
+  setTitle("Save conflict");
+  app.innerHTML = `
+    <section class="panel warning-panel" role="alert">
+      <h2>Save conflict — reload required</h2>
+      <p>Another user changed this record before your save completed. Your rejected values were not saved as local data.</p>
+      <p class="muted">Reload the server record before editing again, or deliberately reapply the rejected edit after reviewing it.</p>
+      <div class="form-actions">
+        <button class="primary-action" id="reloadServerDataButton" type="button">Reload server data</button>
+        <button class="ghost-button" id="reapplyRejectedEditButton" type="button">Reapply rejected edit</button>
+      </div>
+    </section>
+  `;
+  document.getElementById("reloadServerDataButton")?.addEventListener("click", () => location.reload());
+  document.getElementById("reapplyRejectedEditButton")?.addEventListener("click", () => {
+    if (!syncConflict) return;
+    state = cloneState(syncConflict.attemptedState);
+    syncConflict = null;
+    backendStatus.message = "Rejected edit is staged for deliberate reapplication. Review it before saving again.";
+    render();
+  });
 }
 
 function stripCustomerMigrationData(data) {
@@ -1195,6 +1276,12 @@ function createSupabaseStore(config) {
     const { data, error } = await client.auth.getSession();
     if (error) throw error;
     return data.session;
+  }
+
+  async function loadCurrentRole() {
+    const { data, error } = await client.rpc("current_cabinet_ninja_role");
+    if (error) return "";
+    return data || "";
   }
 
   async function optionalWorkshopQuery(query) {
@@ -1337,7 +1424,7 @@ function createSupabaseStore(config) {
     await saveChangedRows("suppliers", previous.suppliers, normalized.suppliers, cleanSupplier);
     if (customerFeaturesAvailable()) await saveChangedRows("customers", previous.customers, normalized.customers, cleanCustomer);
     await saveChangedDashboardRows("leads", previous.leads, normalized.leads, cleanLead);
-    await saveChangedDashboardRows("jobs", previous.jobs, normalized.jobs, (row) => cleanJob(row, customerFeaturesAvailable()));
+    await saveChangedDashboardRows("jobs", previous.jobs, normalized.jobs, (row) => cleanJob(row, customerFeaturesAvailable() && canManageCustomerLinks()));
     await saveChangedRows("categories", previous.categories, normalized.categories, cleanCategory);
     await saveChangedRows("items", previous.items, normalized.items, cleanItem);
     await saveChangedRows("checklist_templates", previous.checklist_templates, normalized.checklist_templates, cleanChecklistTemplate);
@@ -1403,15 +1490,22 @@ function createSupabaseStore(config) {
     client,
     async load() {
       const session = await requireSessionIfConfigured();
+      authenticatedUserId = session?.user?.id || "";
       if (config.requireAuth && !session) {
+        authenticatedRole = "";
+        const safeState = stripCustomerMigrationData(loadLocalState());
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(safeState));
         return {
           mode: "supabase",
           message: "Sign in to sync with Supabase",
           authRequired: true,
-          state: loadLocalState(),
+          userId: "",
+          role: "",
+          state: safeState,
         };
       }
 
+      authenticatedRole = await loadCurrentRole();
       const remoteState = await seedRemoteIfNeeded(await loadTables());
       const safeState = customerFeaturesAvailable() ? remoteState : stripCustomerMigrationData(remoteState);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(safeState));
@@ -1421,6 +1515,8 @@ function createSupabaseStore(config) {
           ? customerMigrationMessage()
           : workshopTablesAvailable ? "Synced with Supabase" : backendStatus.message,
         userEmail: session?.user?.email || "",
+        userId: session?.user?.id || "",
+        role: authenticatedRole,
         state: safeState,
       };
     },
@@ -1731,8 +1827,8 @@ function cleanCustomer(item) {
     active: item.active !== false,
     created_at: item.created_at,
     updated_at: item.updated_at,
-    created_by: item.created_by || null,
-    updated_by: item.updated_by || null,
+    created_by: item.created_by || currentUserId() || null,
+    updated_by: currentUserId() || item.updated_by || null,
   });
 }
 
@@ -1935,6 +2031,8 @@ function createCustomer(input) {
     active: input.active !== false && input.active !== "false",
     created_at: now,
     updated_at: now,
+    created_by: currentUserId() || null,
+    updated_by: currentUserId() || null,
   };
 }
 
@@ -2081,6 +2179,10 @@ function logActivity(jobId, entityType, entityId, action, previousValue = "", ne
 
 function render() {
   const route = getRoute();
+  if (syncConflict) {
+    renderSyncConflict();
+    return;
+  }
   document.querySelectorAll("[data-customer-nav]").forEach((link) => {
     link.classList.toggle("hidden", !customerFeaturesAvailable());
   });
@@ -2141,6 +2243,17 @@ function renderCustomerMigrationBlocked() {
       <h2>Customer features unavailable</h2>
       <p class="muted">${escapeHtml(customerMigrationMessage())}</p>
       <a class="ghost-button" href="#/jobs">Continue to Jobs</a>
+    </section>
+  `;
+}
+
+function renderCustomerPermissionBlocked() {
+  setTitle("Customer editing unavailable");
+  app.innerHTML = `
+    <section class="panel" role="alert">
+      <h2>Customer editing unavailable</h2>
+      <p class="muted">Only Owner/Admin and Office users may create or edit customer records or change job customer links.</p>
+      <a class="ghost-button" href="#/customers">Back to Customers</a>
     </section>
   `;
 }
@@ -2405,7 +2518,7 @@ function renderHome() {
         </div>
         <div class="quick-actions" aria-label="Quick actions">
           <a class="primary-action" href="#/leadform">Add Lead</a>
-          <a class="ghost-button" href="#/leadform">Add Customer</a>
+          ${canManageCustomers() ? '<a class="ghost-button" href="#/customerform">Add Customer</a>' : ""}
           <a class="ghost-button" href="#/jobform">Add Job</a>
           <a class="ghost-button" href="#/add">Add Run List Item</a>
           <a class="ghost-button" href="#/jobs">Add Checklist</a>
@@ -2867,7 +2980,7 @@ function renderCustomers() {
   app.innerHTML = `
     <div class="stack mobile-page">
       <section class="mobile-page-intro">
-        <div class="mobile-title-row"><div><p class="mobile-eyebrow">INTERNAL RECORDS</p><h2>${showInactive ? "Inactive customers" : "Customers"}</h2></div><a class="primary-action" href="#/customerform">+ New customer</a></div>
+        <div class="mobile-title-row"><div><p class="mobile-eyebrow">INTERNAL RECORDS</p><h2>${showInactive ? "Inactive customers" : "Customers"}</h2></div>${canManageCustomers() ? '<a class="primary-action" href="#/customerform">+ New customer</a>' : ""}</div>
         <p class="muted">Keep customer details separate from jobs and link them only when the internal workflow is ready.</p>
       </section>
       <section class="mobile-list-section">
@@ -2894,13 +3007,13 @@ function renderCustomerDetail(id) {
   app.innerHTML = `
     <div class="stack">
       <div class="toolbar">
-        <a class="primary-action" href="#/customerform/${customerItem.id}">Edit customer</a>
+        ${canManageCustomers() ? `<a class="primary-action" href="#/customerform/${customerItem.id}">Edit customer</a>` : ""}
         <a class="ghost-button" href="#/customers">All customers</a>
       </div>
       <section class="panel">
         <h2>Customer Details</h2>
         <div class="list">
-          ${metricRow("Customer number", customerItem.customer_number || "Not assigned")}
+          ${metricRow("Manual reference", customerItem.customer_number || "Not assigned")}
           ${metricRow("Name", customerItem.display_name || "Not set")}
           ${metricRow("Company", customerItem.company_name || "Not set")}
           ${metricRow("Phone", customerItem.phone || "Not set")}
@@ -2928,13 +3041,17 @@ function renderCustomerForm(params = {}, id = null) {
     renderCustomerMigrationBlocked();
     return;
   }
+  if (!canManageCustomers()) {
+    renderCustomerPermissionBlocked();
+    return;
+  }
   const editing = id ? customerById(id) : null;
   const customerItem = editing || createCustomer({});
   setTitle(editing ? "Edit Customer" : "New Customer");
   app.innerHTML = `
     <form class="panel form-grid" id="customerForm">
-      <div class="full"><h2>${editing ? "Edit customer" : "Create customer"}</h2><p class="muted">Internal customer records only. Existing jobs are not changed automatically.</p></div>
-      ${field("Customer number", "customer_number", "text", customerItem.customer_number)}
+      <div class="full"><h2>${editing ? "Edit customer" : "Create customer"}</h2><p class="muted">Internal customer records only. Existing jobs are not changed automatically.</p><p class="muted">UUID is the customer identity. Automatic customer-number generation is deferred; this optional manual reference is not allocated automatically.</p></div>
+      ${field("Manual customer reference (optional)", "customer_number", "text", customerItem.customer_number)}
       ${field("Display name", "display_name", "text", customerItem.display_name, "full", true)}
       ${field("Company", "company_name", "text", customerItem.company_name)}
       ${field("Phone", "phone", "tel", customerItem.phone)}
@@ -2956,15 +3073,18 @@ function renderCustomerForm(params = {}, id = null) {
       Object.assign(editing, nextValues, {
         active: nextValues.active !== "false",
         updated_at: nowIso(),
+        updated_by: currentUserId() || editing.updated_by || null,
       });
-      saveState();
-      navigate(`/customers/${editing.id}`);
+      saveState()
+        .then(() => navigate(`/customers/${editing.id}`))
+        .catch(() => {});
       return;
     }
     const nextCustomer = createCustomer(nextValues);
     state.customers.unshift(nextCustomer);
-    saveState();
-    navigate(`/customers/${nextCustomer.id}`);
+    saveState()
+      .then(() => navigate(`/customers/${nextCustomer.id}`))
+      .catch(() => {});
   });
 }
 
@@ -3223,7 +3343,7 @@ function renderJobForm(params = {}) {
       </section>
       ${field("Client name", "client_name", "text", params.client || "", "full", true)}
       ${field("Job name", "job_name", "text", params.name || "", "full", true)}
-      ${customerFeaturesAvailable() ? selectField("Customer", "customer_id", params.customer_id || "", customerOptions()) : ""}
+      ${canManageCustomerLinks() && customerFeaturesAvailable() ? selectField("Customer", "customer_id", params.customer_id || "", customerOptions()) : ""}
       ${field("Location", "location", "text", params.location || "", "full")}
       ${selectField("Starting stage", "status", params.status || "job_accepted", JOB_STAGE_OPTIONS)}
       ${selectField("Priority", "priority", params.priority || "normal", PRIORITY_OPTIONS)}
@@ -3251,7 +3371,7 @@ function renderJobForm(params = {}) {
     newJob.target_install_date = form.get("target_install_date") || "";
     newJob.next_action = form.get("next_action") || "";
     newJob.next_action_due_date = form.get("next_action_due_date") || "";
-    if (customerFeaturesAvailable()) newJob.customer_id = form.get("customer_id") || null;
+    if (canManageCustomerLinks() && customerFeaturesAvailable()) newJob.customer_id = form.get("customer_id") || null;
     newJob.active = newJob.status !== "archived";
     state.jobs.unshift(newJob);
     saveState();
@@ -3273,7 +3393,7 @@ function renderJobDetail(id) {
   const customerSummary = customerFeaturesAvailable()
     ? `<div class="list"><div class="list-link"><strong>Customer</strong><span>${customerItem ? `<a href="#/customers/${customerItem.id}">${escapeHtml(customerLabel(customerItem))}</a>` : "No customer linked"}</span></div></div>`
     : "";
-  const customerSelect = customerFeaturesAvailable()
+  const customerSelect = canManageCustomerLinks() && customerFeaturesAvailable()
     ? selectField("Customer", "customer_id", jobItem.customer_id || "", customerOptions(jobItem.customer_id || ""))
     : "";
 
@@ -3432,7 +3552,7 @@ function setJobStage(jobId, status) {
   navigate(CLOSED_JOB_STATUSES.has(jobItem.status) ? "/jobs" : `/jobs/${jobId}`);
 }
 
-function updateJobPlanning(jobId, values) {
+async function updateJobPlanning(jobId, values) {
   const jobItem = jobById(jobId);
   if (!jobItem) return;
   const changes = {
@@ -3442,11 +3562,15 @@ function updateJobPlanning(jobId, values) {
     next_action_due_date: values.next_action_due_date || "",
     updated_at: nowIso(),
   };
-  if (customerFeaturesAvailable()) changes.customer_id = values.customer_id || null;
+  if (canManageCustomerLinks() && customerFeaturesAvailable()) changes.customer_id = values.customer_id || null;
   Object.assign(jobItem, changes);
-  saveState();
-  toast("Job planning saved.");
-  render();
+  try {
+    await saveState();
+    toast("Job planning saved.");
+    render();
+  } catch {
+    // saveState restores the last authoritative snapshot and renders the error state.
+  }
 }
 
 function toggleJobCancelled(jobId) {
