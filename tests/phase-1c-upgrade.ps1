@@ -260,4 +260,7 @@ commit;
 "@
 if ($ownerClear -ne "<null>") { throw "Owner/Admin could not clear a job customer link." }
 
-Write-Output "Phase 1C upgrade test passed: additive customer foundation, manual-reference collision guard, authenticated audit fields, nullable link, role-bound linking, idempotent rerun, and existing job identity/CN-#### preservation verified."
+& (Join-Path $PSScriptRoot "phase-1c-lead-conversion.ps1") -SupabaseCli $SupabaseCli -Container $Container
+if ($LASTEXITCODE -ne 0) { throw "Phase 1C lead-conversion workflow checks failed." }
+
+Write-Output "Phase 1C upgrade test passed: additive customer foundation, lead-conversion workflow, manual-reference collision guard, authenticated audit fields, nullable link, role-bound linking, idempotent rerun, and existing job identity/CN-#### preservation verified."
