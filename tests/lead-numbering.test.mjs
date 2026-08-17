@@ -34,7 +34,7 @@ test("a converted lead keeps its numeric suffix as a job number", () => {
   assert.equal(context.jobNumberForLead("CNL-0042"), "CN-0042");
   assert.equal(context.jobNumberForLead("unknown"), "CN-0001");
 });
-test("lead creation and conversion use the stored lead number", () => {
+test("lead creation and conversion planning use the stored lead number", () => {
   assert.match(appSource, /lead_number:\s*input\.lead_number\?\.trim\(\)\s*\|\|\s*nextLeadNumber\(\)/);
-  assert.match(appSource, /const leadNumber = leadItem\.lead_number \|\| nextLeadNumber\(\);\s*const nextJob = job\(jobNumberForLead\(leadNumber\),/s);
+  assert.match(appSource, /jobNumberForLead\(leadItem\.lead_number \|\| nextLeadNumber\(\)/);
 });

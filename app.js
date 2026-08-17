@@ -45,7 +45,7 @@ const PRIORITY_OPTIONS = [
 
 const COMPLETED_STATUSES = new Set(["picked_up", "done", "cancelled"]);
 const CLOSED_JOB_STATUSES = new Set(["complete", "completed", "done", "cancelled", "archived"]);
-const CLOSED_LEAD_STATUSES = new Set(["job_accepted", "job_declined", "accepted", "won", "lost", "cancelled"]);
+const CLOSED_LEAD_STATUSES = new Set(["converted", "job_accepted", "job_declined", "accepted", "won", "lost", "cancelled"]);
 const JOB_NUMBER_PREFIX = "CN";
 const LEAD_NUMBER_PREFIX = "CNL";
 const TRACKING_NUMBER_PAD = 4;
@@ -127,6 +127,7 @@ const LEAD_STATUS_OPTIONS = [
   ["quote_sent", "Quote sent"],
   ["waiting_on_client", "Waiting on client"],
   ["follow_up", "Follow up"],
+  ["converted", "Converted"],
   ["job_accepted", "Job accepted"],
   ["job_declined", "Job declined"],
   ["lost", "Lost"],
@@ -351,6 +352,7 @@ let dashboardColumnsAvailable = true;
 let workshopTablesAvailable = true;
 let customersTableAvailable = true;
 let customerLinkColumnAvailable = true;
+let leadConversionAvailable = true;
 let dymoLabelState = { labels: [], selectedSheetKeys: [], includeSeparators: true, edgeOrder: "left,top,right,bottom" };
 let customerFolderSelection = { files: [], name: "", handle: null };
 const customerFolderRelativePaths = new WeakMap();
@@ -754,6 +756,15 @@ function normalizeState(data) {
       last_contacted_at: "",
       notes: "",
       converted_job_id: "",
+      converted_at: "",
+      converted_by: null,
+      customer_id: null,
+      job_id: null,
+      conversion_context: {},
+      scope: "",
+      budget: "",
+      location_details: "",
+      enquiry_attachments: [],
       active: true,
       ...item,
       lead_number: item.lead_number || "",
@@ -771,6 +782,15 @@ function normalizeState(data) {
       last_contacted_at: item.last_contacted_at || "",
       notes: item.notes || "",
       converted_job_id: item.converted_job_id || "",
+      converted_at: item.converted_at || "",
+      converted_by: item.converted_by || null,
+      customer_id: item.customer_id || null,
+      job_id: item.job_id || null,
+      conversion_context: item.conversion_context || {},
+      scope: item.scope || "",
+      budget: item.budget || "",
+      location_details: item.location_details || "",
+      enquiry_attachments: Array.isArray(item.enquiry_attachments) ? item.enquiry_attachments : [],
       active: item.active !== false,
     })),
     jobs: (data.jobs || []).map((item) => ({
@@ -784,6 +804,13 @@ function normalizeState(data) {
       next_action_due_date: "",
       target_install_date: "",
       customer_id: null,
+      source_lead_id: null,
+      scope: "",
+      budget: "",
+      location_details: "",
+      notes: "",
+      enquiry_attachments: [],
+      enquiry_context: {},
       active: true,
       ...item,
       job_number: item.job_number || "",
@@ -796,6 +823,13 @@ function normalizeState(data) {
       next_action_due_date: item.next_action_due_date || "",
       target_install_date: item.target_install_date || "",
       customer_id: item.customer_id || null,
+      source_lead_id: item.source_lead_id || null,
+      scope: item.scope || "",
+      budget: item.budget || "",
+      location_details: item.location_details || "",
+      notes: item.notes || "",
+      enquiry_attachments: Array.isArray(item.enquiry_attachments) ? item.enquiry_attachments : [],
+      enquiry_context: item.enquiry_context || {},
     })),
     categories: (data.categories || []).map((item) => ({
       notes: "",
@@ -1192,8 +1226,8 @@ function canManageCustomerLinks() {
 }
 
 function persistAuthoritativeState(nextState) {
-  const localSnapshot = isSupabaseMode() && !customerFeaturesAvailable()
-    ? stripCustomerMigrationData(nextState)
+  const localSnapshot = isSupabaseMode() && (!customerFeaturesAvailable() || !leadConversionAvailable)
+    ? stripUnavailableMigrationData(nextState)
     : cloneState(nextState);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(localSnapshot));
 }
@@ -1238,6 +1272,46 @@ function stripCustomerMigrationData(data) {
     const { customer_id, ...jobWithoutCustomer } = jobItem;
     return jobWithoutCustomer;
   });
+  return safeState;
+}
+
+function stripLeadConversionData(data) {
+  const safeState = cloneState(data);
+  safeState.leads = (safeState.leads || []).map((leadItem) => {
+    const {
+      converted_at,
+      converted_by,
+      customer_id,
+      job_id,
+      conversion_context,
+      scope,
+      budget,
+      location_details,
+      enquiry_attachments,
+      ...leadWithoutConversion
+    } = leadItem;
+    return leadWithoutConversion;
+  });
+  safeState.jobs = (safeState.jobs || []).map((jobItem) => {
+    const {
+      source_lead_id,
+      scope,
+      budget,
+      location_details,
+      notes,
+      enquiry_attachments,
+      enquiry_context,
+      ...jobWithoutConversion
+    } = jobItem;
+    return jobWithoutConversion;
+  });
+  return safeState;
+}
+
+function stripUnavailableMigrationData(data) {
+  let safeState = cloneState(data);
+  if (!customerFeaturesAvailable()) safeState = stripCustomerMigrationData(safeState);
+  if (!leadConversionAvailable) safeState = stripLeadConversionData(safeState);
   return safeState;
 }
 
@@ -1311,14 +1385,25 @@ function createSupabaseStore(config) {
     return { data: [], error: null };
   }
 
+  async function optionalLeadConversionQuery(query) {
+    const result = await query;
+    if (!result.error) return result;
+    if (!isMissingLeadConversionColumnError(result.error)) throw result.error;
+    leadConversionAvailable = false;
+    backendStatus.message = leadConversionMigrationMessage();
+    return { data: [], error: null };
+  }
+
   async function loadTables() {
     customersTableAvailable = true;
     customerLinkColumnAvailable = true;
+    leadConversionAvailable = true;
     workshopTablesAvailable = true;
     const [
       suppliers,
       customers,
       customerLinkColumn,
+      leadConversionColumns,
       leads,
       jobs,
       categories,
@@ -1340,6 +1425,7 @@ function createSupabaseStore(config) {
       client.from("suppliers").select("*").order("supplier_name"),
       optionalCustomerQuery(client.from("customers").select("*").order("display_name")),
       optionalCustomerColumnQuery(client.from("jobs").select("id, customer_id").limit(1)),
+      optionalLeadConversionQuery(client.from("leads").select("id, converted_at, converted_by, customer_id, job_id, conversion_context, scope, budget, location_details, enquiry_attachments").limit(1)),
       client.from("leads").select("*").order("created_at", { ascending: false }),
       client.from("jobs").select("*").order("job_name"),
       client.from("categories").select("*").order("category_name"),
@@ -1379,11 +1465,13 @@ function createSupabaseStore(config) {
       cut_part_suggestions: cutPartSuggestions,
       remake_requests: remakeRequests,
       activity_history: activityHistory,
+      lead_conversion_columns: leadConversionColumns,
     };
     for (const key of TABLES) {
       if (result[key].error) throw result[key].error;
     }
     if (!customerFeaturesAvailable()) backendStatus.message = customerMigrationMessage();
+    else if (!leadConversionAvailable) backendStatus.message = leadConversionMigrationMessage();
 
     return normalizeState({
       suppliers: suppliers.data || [],
@@ -1423,7 +1511,7 @@ function createSupabaseStore(config) {
     const previous = previousState ? normalizeState(previousState) : {};
     await saveChangedRows("suppliers", previous.suppliers, normalized.suppliers, cleanSupplier);
     if (customerFeaturesAvailable()) await saveChangedRows("customers", previous.customers, normalized.customers, cleanCustomer);
-    await saveChangedDashboardRows("leads", previous.leads, normalized.leads, cleanLead);
+    await saveChangedDashboardRows("leads", previous.leads, normalized.leads, (row) => cleanLead(row, leadConversionAvailable));
     await saveChangedDashboardRows("jobs", previous.jobs, normalized.jobs, (row) => cleanJob(row, customerFeaturesAvailable() && canManageCustomerLinks()));
     await saveChangedRows("categories", previous.categories, normalized.categories, cleanCategory);
     await saveChangedRows("items", previous.items, normalized.items, cleanItem);
@@ -1494,26 +1582,29 @@ function createSupabaseStore(config) {
       if (config.requireAuth && !session) {
         authenticatedRole = "";
         const safeState = stripCustomerMigrationData(loadLocalState());
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(safeState));
+        const safeMigrationState = leadConversionAvailable ? safeState : stripLeadConversionData(safeState);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(safeMigrationState));
         return {
           mode: "supabase",
           message: "Sign in to sync with Supabase",
           authRequired: true,
           userId: "",
           role: "",
-          state: safeState,
+          state: safeMigrationState,
         };
       }
 
       authenticatedRole = await loadCurrentRole();
       const remoteState = await seedRemoteIfNeeded(await loadTables());
-      const safeState = customerFeaturesAvailable() ? remoteState : stripCustomerMigrationData(remoteState);
+      const safeState = stripUnavailableMigrationData(remoteState);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(safeState));
       return {
         mode: "supabase",
         message: !customerFeaturesAvailable()
           ? customerMigrationMessage()
-          : workshopTablesAvailable ? "Synced with Supabase" : backendStatus.message,
+          : !leadConversionAvailable
+            ? leadConversionMigrationMessage()
+            : workshopTablesAvailable ? "Synced with Supabase" : backendStatus.message,
         userEmail: session?.user?.email || "",
         userId: session?.user?.id || "",
         role: authenticatedRole,
@@ -1559,6 +1650,18 @@ function createSupabaseStore(config) {
       if (!data?.url) throw new Error("A signed file URL was not returned.");
       return data.url;
     },
+    async convertLeadToCustomer(leadId, customerMode, existingCustomerId, customerContact) {
+      if (!leadConversionAvailable) throw new Error(leadConversionMigrationMessage());
+      const { data, error } = await client.rpc("convert_lead_to_customer", {
+        p_lead_id: leadId,
+        p_customer_mode: customerMode,
+        p_existing_customer_id: existingCustomerId || null,
+        p_customer_contact: customerContact || {},
+      });
+      if (error) throw error;
+      if (!data?.lead || !data?.customer || !data?.job) throw new Error("The conversion did not return complete lead, customer, and job records.");
+      return data;
+    },
     async signInWithEmail(email) {
       const { error } = await client.auth.signInWithOtp({
         email,
@@ -1588,8 +1691,8 @@ function cleanSupplier(item) {
   });
 }
 
-function cleanLead(item) {
-  return pickDefined({
+function cleanLead(item, includeConversion = true) {
+  const cleaned = pickDefined({
     id: item.id,
     lead_number: item.lead_number || "",
     lead_name: item.lead_name || "",
@@ -1610,6 +1713,18 @@ function cleanLead(item) {
     created_at: item.created_at,
     updated_at: item.updated_at,
   });
+  if (includeConversion) Object.assign(cleaned, pickDefined({
+    converted_at: item.converted_at || null,
+    converted_by: item.converted_by || null,
+    customer_id: item.customer_id || null,
+    job_id: item.job_id || null,
+    conversion_context: item.conversion_context || {},
+    scope: item.scope || null,
+    budget: item.budget || null,
+    location_details: item.location_details || null,
+    enquiry_attachments: Array.isArray(item.enquiry_attachments) ? item.enquiry_attachments : [],
+  }));
+  return cleaned;
 }
 
 function cleanJob(item, includeCustomerLink = true) {
@@ -1630,6 +1745,20 @@ function cleanJob(item, includeCustomerLink = true) {
     updated_at: item.updated_at,
   });
   if (!includeCustomerLink) delete cleaned.customer_id;
+  const hasConversionContext = Boolean(
+    item.source_lead_id || item.scope || item.budget || item.location_details || item.notes ||
+    (Array.isArray(item.enquiry_attachments) && item.enquiry_attachments.length) ||
+    (item.enquiry_context && Object.keys(item.enquiry_context).length)
+  );
+  if (hasConversionContext) Object.assign(cleaned, pickDefined({
+    source_lead_id: item.source_lead_id || null,
+    scope: item.scope || null,
+    budget: item.budget || null,
+    location_details: item.location_details || null,
+    notes: item.notes || null,
+    enquiry_attachments: Array.isArray(item.enquiry_attachments) ? item.enquiry_attachments : [],
+    enquiry_context: item.enquiry_context || {},
+  }));
   return cleaned;
 }
 
@@ -1678,8 +1807,18 @@ function isMissingCustomerColumnError(error) {
   return message.includes("customer_id") && (message.includes("does not exist") || message.includes("schema cache"));
 }
 
+function isMissingLeadConversionColumnError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return ["converted_at", "converted_by", "customer_id", "job_id", "conversion_context", "scope", "budget", "enquiry_attachments", "location_details", "source_lead_id"]
+    .some((column) => message.includes(column)) && (message.includes("does not exist") || message.includes("schema cache"));
+}
+
 function customerMigrationMessage() {
   return "Customer features require the Phase 1C migration (customers table and jobs.customer_id column). Existing job features remain available.";
+}
+
+function leadConversionMigrationMessage() {
+  return "Lead conversion requires the Phase 1C conversion migration. Existing lead, customer, job, and Run List features remain available.";
 }
 
 function cleanCategory(item) {
@@ -2011,6 +2150,15 @@ function createLead(input) {
     last_contacted_at: input.last_contacted_at || "",
     notes: input.notes || "",
     converted_job_id: input.converted_job_id || "",
+    converted_at: input.converted_at || "",
+    converted_by: input.converted_by || null,
+    customer_id: input.customer_id || null,
+    job_id: input.job_id || null,
+    conversion_context: input.conversion_context || {},
+    scope: input.scope || "",
+    budget: input.budget || "",
+    location_details: input.location_details || "",
+    enquiry_attachments: Array.isArray(input.enquiry_attachments) ? input.enquiry_attachments : [],
     active: input.active !== false,
     created_at: now,
     updated_at: now,
@@ -2388,6 +2536,187 @@ function customerOptions(selectedId = "") {
       .sort((a, b) => customerLabel(a).localeCompare(customerLabel(b)))
       .map((customerItem) => [customerItem.id, customerLabel(customerItem)]),
   ];
+}
+
+function canonicalNzPhone(value) {
+  const digits = String(value || "").replace(/[^0-9]/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("0064")) return `0${digits.slice(4)}`;
+  return digits.startsWith("64") ? `0${digits.slice(2)}` : digits;
+}
+
+function normalizeDuplicateValue(value, kind = "text") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (kind === "phone") return canonicalNzPhone(raw);
+  return raw.replace(/\s+/g, " ");
+}
+
+function leadContactValue(leadItem, field, submittedContact = null) {
+  const submittedField = field === "name" ? "display_name" : field;
+  if (submittedContact && Object.prototype.hasOwnProperty.call(submittedContact, submittedField)) {
+    return submittedContact[submittedField] || "";
+  }
+  if (field === "name") return leadItem.client_name || leadItem.lead_name || "";
+  if (field === "address") return leadItem.location_details || leadItem.location || "";
+  return leadItem[field] || "";
+}
+
+function customerContactValue(customerItem, field) {
+  if (field === "name") return customerItem.display_name || "";
+  return customerItem[field] || "";
+}
+
+function customerMatchesLead(leadItem, customerItem, submittedContact = null) {
+  return [
+    ["email", "text"],
+    ["phone", "phone"],
+    ["name", "text"],
+    ["address", "text"],
+  ].some(([field, kind]) => {
+    const leadValue = normalizeDuplicateValue(leadContactValue(leadItem, field, submittedContact), kind);
+    const customerValue = normalizeDuplicateValue(customerContactValue(customerItem, field), kind);
+    return Boolean(leadValue && customerValue && leadValue === customerValue);
+  });
+}
+
+function findPotentialCustomerMatches(leadItem, customers = state.customers, submittedContact = null) {
+  return (customers || []).filter((customerItem) => customerMatchesLead(leadItem, customerItem, submittedContact));
+}
+
+function leadEnquiryAttachments(leadItem) {
+  const attachments = Array.isArray(leadItem?.enquiry_attachments)
+    ? leadItem.enquiry_attachments
+    : Array.isArray(leadItem?.attachments) ? leadItem.attachments : [];
+  return cloneState(attachments);
+}
+
+function buildLeadConversionContext(leadItem, values = {}) {
+  return {
+    source_lead_id: leadItem.id,
+    lead_number: leadItem.lead_number || "",
+    lead_name: leadItem.lead_name || "",
+    source: leadItem.source || "",
+    scope: values.scope ?? leadItem.scope ?? "",
+    budget: values.budget ?? leadItem.budget ?? "",
+    location_details: values.location_details ?? leadItem.location_details ?? leadItem.location ?? "",
+    notes: values.notes ?? leadItem.notes ?? "",
+    attachments: leadEnquiryAttachments(leadItem),
+  };
+}
+
+function leadCustomerContact(leadItem, values = {}) {
+  return {
+    display_name: values.display_name ?? leadItem.client_name ?? leadItem.lead_name ?? "",
+    company_name: values.company_name ?? leadItem.company_name ?? "",
+    phone: values.phone ?? leadItem.phone ?? "",
+    email: values.email ?? leadItem.email ?? "",
+    address: values.address ?? leadItem.location_details ?? leadItem.location ?? "",
+    customer_notes: values.customer_notes ?? "",
+  };
+}
+
+function conversionRecordsFromResult(result) {
+  return {
+    lead: result?.lead || null,
+    customer: result?.customer || null,
+    job: result?.job || null,
+  };
+}
+
+function applyConversionResult(result) {
+  const records = conversionRecordsFromResult(result);
+  if (!records.lead || !records.customer || !records.job) throw new Error("The conversion result was incomplete.");
+  const replace = (rows, record) => {
+    const index = rows.findIndex((row) => row.id === record.id);
+    if (index === -1) rows.unshift(record);
+    else rows[index] = { ...rows[index], ...record };
+  };
+  replace(state.leads, records.lead);
+  replace(state.customers, records.customer);
+  replace(state.jobs, records.job);
+  return records;
+}
+
+function convertLeadInLocalState(leadId, customerMode, existingCustomerId, customerContact) {
+  if (!canManageCustomers()) throw new Error("Only Owner/Admin or Office may convert a lead.");
+  if (!leadConversionAvailable) throw new Error(leadConversionMigrationMessage());
+  const before = cloneState(state);
+  try {
+    const leadItem = leadById(leadId);
+    if (!leadItem) throw new Error("Lead not found.");
+    const currentCustomer = customerById(leadItem.customer_id);
+    const currentJob = jobById(leadItem.job_id || leadItem.converted_job_id);
+    if (currentCustomer && currentJob) {
+      return { idempotent: true, lead: cloneState(leadItem), customer: cloneState(currentCustomer), job: cloneState(currentJob) };
+    }
+    const submittedContact = leadCustomerContact(leadItem, customerContact || {});
+    const matches = findPotentialCustomerMatches(leadItem, state.customers, submittedContact);
+    if (!['link_existing', 'create_new'].includes(customerMode)) throw new Error("Choose whether to link an existing customer or create a new customer.");
+    let customerItem;
+    if (customerMode === "link_existing") {
+      customerItem = customerById(existingCustomerId);
+      if (!customerItem || !matches.some((candidate) => candidate.id === customerItem.id)) {
+        throw new Error("Select one of the detected matching customers before linking.");
+      }
+    } else {
+      if (existingCustomerId) throw new Error("A new-customer conversion cannot include an existing customer.");
+      customerItem = createCustomer(leadCustomerContact(leadItem, customerContact));
+      state.customers.unshift(customerItem);
+    }
+    const context = buildLeadConversionContext(leadItem, customerContact);
+    const nextJob = currentJob || job(
+      jobNumberForLead(leadItem.lead_number || nextLeadNumber()),
+      customerItem.display_name || leadItem.client_name || leadItem.lead_name,
+      leadItem.lead_name || leadItem.client_name,
+      leadItem.location || "",
+      "job_accepted",
+    );
+    Object.assign(nextJob, {
+      customer_id: customerItem.id,
+      source_lead_id: leadItem.id,
+      scope: context.scope,
+      budget: context.budget,
+      location_details: context.location_details,
+      notes: context.notes,
+      enquiry_attachments: context.attachments,
+      enquiry_context: context,
+      active: true,
+      updated_at: nowIso(),
+    });
+    if (!currentJob) state.jobs.unshift(nextJob);
+    Object.assign(leadItem, {
+      status: "converted",
+      active: false,
+      converted_at: nowIso(),
+      converted_by: currentUserId() || null,
+      customer_id: customerItem.id,
+      job_id: nextJob.id,
+      converted_job_id: nextJob.id,
+      conversion_context: context,
+      updated_at: nowIso(),
+    });
+    return { idempotent: false, lead: cloneState(leadItem), customer: cloneState(customerItem), job: cloneState(nextJob) };
+  } catch (error) {
+    state = before;
+    throw error;
+  }
+}
+
+async function completeLeadConversion(leadId, customerMode, existingCustomerId, customerContact) {
+  if (!canManageCustomers()) throw new Error("Only Owner/Admin or Office may convert a lead.");
+  if (!customerFeaturesAvailable() || !leadConversionAvailable) throw new Error(leadConversionMigrationMessage());
+  let result;
+  if (isSupabaseMode() && dataStore?.convertLeadToCustomer) {
+    result = await dataStore.convertLeadToCustomer(leadId, customerMode, existingCustomerId, customerContact);
+    applyConversionResult(result);
+    lastSyncedState = cloneState(state);
+    persistAuthoritativeState(state);
+  } else {
+    result = convertLeadInLocalState(leadId, customerMode, existingCustomerId, customerContact);
+    await saveState();
+  }
+  return result;
 }
 
 function categoryById(id) {
@@ -3088,6 +3417,123 @@ function renderCustomerForm(params = {}, id = null) {
   });
 }
 
+function renderLeadConversionBlocked() {
+  setTitle("Lead conversion unavailable");
+  app.innerHTML = `
+    <section class="panel warning-panel" role="alert">
+      <h2>Lead conversion unavailable</h2>
+      <p class="muted">${escapeHtml(!customerFeaturesAvailable() ? customerMigrationMessage() : leadConversionMigrationMessage())}</p>
+      <a class="ghost-button" href="#/leads">Back to Leads</a>
+    </section>
+  `;
+}
+
+function renderLeadConversionForm(id, formValues = {}) {
+  if (!customerFeaturesAvailable() || !leadConversionAvailable) {
+    renderLeadConversionBlocked();
+    return;
+  }
+  if (!canManageCustomers()) {
+    renderCustomerPermissionBlocked();
+    return;
+  }
+  const leadItem = leadById(id);
+  if (!leadItem) {
+    renderNotFound("Lead not found.");
+    return;
+  }
+  const contact = leadCustomerContact(leadItem, formValues);
+  const context = buildLeadConversionContext(leadItem, formValues);
+  const matches = findPotentialCustomerMatches(leadItem, state.customers, contact);
+  const modeOptions = matches.length
+    ? [["", "Choose an option"], ["link_existing", "Link to a matching customer"], ["create_new", "Create a new customer"]]
+    : [["create_new", "Create a new customer"]];
+  setTitle("Convert lead to customer");
+  app.innerHTML = `
+    <div class="stack mobile-page mobile-lead-conversion-page">
+      <section class="mobile-page-intro">
+        <p class="mobile-eyebrow">LEAD CONVERSION</p>
+        <h2>Convert to customer</h2>
+        <p class="muted">The original lead will be retained. This creates or links one internal customer and creates or links one job for the enquiry.</p>
+      </section>
+      ${matches.length ? `
+        <section class="panel warning-panel" role="alert">
+          <h3>Possible duplicate customer${matches.length === 1 ? "" : "s"} found</h3>
+          <p class="muted">Matches were found using email, phone, name, or address. Choose whether to link an existing record or deliberately create a new one.</p>
+          <div class="list">
+            ${matches.map((customerItem) => `<div class="list-link"><span><strong>${escapeHtml(customerLabel(customerItem))}</strong><br><span class="muted">${escapeHtml([customerItem.email, customerItem.phone, customerItem.address].filter(Boolean).join(" - ") || "No contact details")}</span></span></div>`).join("")}
+          </div>
+        </section>
+      ` : `<section class="panel"><p class="muted">No possible duplicate customer was found. A new internal customer record will be created from the verified contact details below.</p></section>`}
+      <form class="panel form-grid" id="leadConversionForm">
+        ${selectField("Customer decision", "customer_mode", matches.length ? "" : "create_new", modeOptions, true)}
+        ${matches.length ? selectField("Matching customer", "existing_customer_id", "", [["", "Choose a matching customer"], ...matches.map((customerItem) => [customerItem.id, customerLabel(customerItem)])]) : ""}
+        <div class="full"><h3>Stable contact information</h3></div>
+        ${field("Display name", "display_name", "text", contact.display_name, "full", true)}
+        ${field("Company", "company_name", "text", contact.company_name)}
+        ${field("Phone", "phone", "tel", contact.phone)}
+        ${field("Email", "email", "email", contact.email)}
+        ${field("Address", "address", "text", contact.address, "full")}
+        <div class="full"><h3>Enquiry and job context</h3><p class="muted">These values are copied into the job context. Existing file records and paths are referenced, not moved.</p></div>
+        ${textareaField("Scope", "scope", context.scope, "full")}
+        ${field("Budget", "budget", "text", context.budget, "full")}
+        ${textareaField("Location details", "location_details", context.location_details, "full")}
+        ${textareaField("Notes", "notes", context.notes, "full")}
+        <div class="field full"><label>Attachments<input name="attachments_summary" type="text" value="${escapeAttr(context.attachments.map((item) => typeof item === "string" ? item : item.name || item.path || item.filename || "Attachment").join(", "))}" readonly /></label><span class="muted">Existing attachments are retained and copied into the job context.</span></div>
+        <div class="form-actions full">
+          <button class="primary-action" type="submit">Confirm conversion</button>
+          <a class="ghost-button" href="#/leads/${leadItem.id}">Cancel</a>
+        </div>
+      </form>
+    </div>
+  `;
+  document.getElementById("leadConversionForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (matches.length && values.customer_mode === "link_existing" && !values.existing_customer_id) {
+      toast("Choose the matching customer to link, or choose Create a new customer.");
+      return;
+    }
+    const submittedContact = {
+      display_name: values.display_name,
+      company_name: values.company_name,
+      phone: values.phone,
+      email: values.email,
+      address: values.address,
+    };
+    const submittedMatches = findPotentialCustomerMatches(leadItem, state.customers, submittedContact);
+    const matchIds = matches.map((customerItem) => customerItem.id).join(",");
+    const submittedMatchIds = submittedMatches.map((customerItem) => customerItem.id).join(",");
+    if (matchIds !== submittedMatchIds) {
+      renderLeadConversionForm(id, values);
+      toast("Possible duplicate results were updated. Review the matching customer choice before converting.");
+      return;
+    }
+    try {
+      await completeLeadConversion(
+        id,
+        values.customer_mode,
+        values.existing_customer_id || null,
+        {
+          display_name: values.display_name,
+          company_name: values.company_name,
+          phone: values.phone,
+          email: values.email,
+          address: values.address,
+          scope: values.scope,
+          budget: values.budget,
+          location_details: values.location_details,
+          notes: values.notes,
+        },
+      );
+      toast("Lead converted. Original lead retained and customer/job linked.");
+      navigate(`/leads/${id}`);
+    } catch (error) {
+      toast(`Lead conversion failed: ${error.message}`);
+    }
+  });
+}
+
 function renderLeadDetail(id) {
   const leadItem = leadById(id);
   if (!leadItem) {
@@ -3095,14 +3541,19 @@ function renderLeadDetail(id) {
     return;
   }
   setTitle(labelForLead(leadItem));
-  const convertedJob = jobById(leadItem.converted_job_id);
+  const convertedJob = jobById(leadItem.job_id || leadItem.converted_job_id);
+  const convertedCustomer = customerFeaturesAvailable() ? customerById(leadItem.customer_id || convertedJob?.customer_id) : null;
+  const conversionComplete = Boolean(convertedJob && convertedCustomer && leadItem.status === "converted");
   app.innerHTML = `
     <div class="stack">
       <div class="toolbar">
         <a class="primary-action" href="#/leadform/${leadItem.id}">Edit lead</a>
-        ${convertedJob ? `<a class="ghost-button" href="#/jobs/${convertedJob.id}">Open job</a>` : '<button class="ghost-button" id="convertLeadButton" type="button">Create job</button>'}
+        ${convertedJob ? `<a class="ghost-button" href="#/jobs/${convertedJob.id}">Open job</a>` : ""}
+        ${convertedCustomer ? `<a class="ghost-button" href="#/customers/${convertedCustomer.id}">Open customer</a>` : ""}
+        ${conversionComplete ? '<span class="status-pill good">Converted</span>' : leadConversionAvailable && canManageCustomers() ? '<button class="primary-action" id="convertLeadButton" type="button">Convert to customer</button>' : ""}
         <button class="ghost-button" id="closeLeadButton" type="button">${CLOSED_LEAD_STATUSES.has(leadItem.status) ? "Reopen lead" : "Close lead"}</button>
       </div>
+      ${!leadConversionAvailable ? `<section class="panel warning-panel" role="status"><strong>Customer conversion is not available yet.</strong><br><span class="muted">${escapeHtml(leadConversionMigrationMessage())}</span></section>` : ""}
       <section class="panel">
         <h2>Lead Details</h2>
         <div class="list">
@@ -3118,13 +3569,16 @@ function renderLeadDetail(id) {
           ${metricRow("Next action", leadItem.next_action || "Not set")}
           ${metricRow("Action due", leadItem.next_action_due_date ? formatDate(leadItem.next_action_due_date) : "Not set")}
           ${metricRow("Last contacted", leadItem.last_contacted_at ? formatDate(leadItem.last_contacted_at) : "Not set")}
+          ${metricRow("Converted", leadItem.converted_at ? formatDate(leadItem.converted_at) : "Not converted")}
+          ${convertedCustomer ? metricRow("Customer", customerLabel(convertedCustomer)) : ""}
+          ${convertedJob ? metricRow("Job", labelForJob(convertedJob)) : ""}
         </div>
         ${leadItem.notes ? `<p class="item-notes lead-notes">${linkify(leadItem.notes)}</p>` : ""}
       </section>
     </div>
   `;
 
-  document.getElementById("convertLeadButton")?.addEventListener("click", () => convertLeadToJob(id));
+  document.getElementById("convertLeadButton")?.addEventListener("click", () => renderLeadConversionForm(id));
   document.getElementById("closeLeadButton").addEventListener("click", () => toggleLeadClosed(id));
 }
 
@@ -3151,6 +3605,9 @@ function renderLeadForm(params = {}, id = null) {
       ${field("Next action", "next_action", "text", leadItem.next_action, "full")}
       ${field("Action due", "next_action_due_date", "date", leadItem.next_action_due_date)}
       ${field("Last contacted", "last_contacted_at", "date", leadItem.last_contacted_at)}
+      ${textareaField("Enquiry scope", "scope", leadItem.scope, "full")}
+      ${field("Budget", "budget", "text", leadItem.budget, "full")}
+      ${textareaField("Location details", "location_details", leadItem.location_details || leadItem.location, "full")}
       ${textareaField("Notes", "notes", leadItem.notes, "full")}
       <div class="form-actions">
         <button class="primary-action" type="submit">Save</button>
@@ -3250,25 +3707,7 @@ function stageRowLabel(item, kind) {
 }
 
 function convertLeadToJob(id) {
-  const leadItem = leadById(id);
-  if (!leadItem) return;
-  const existingJob = jobById(leadItem.converted_job_id);
-  if (existingJob) {
-    navigate(`/jobs/${existingJob.id}`);
-    return;
-  }
-  const leadNumber = leadItem.lead_number || nextLeadNumber();
-  const nextJob = job(jobNumberForLead(leadNumber), leadItem.client_name || leadItem.lead_name, leadItem.lead_name, leadItem.location, "job_accepted");
-  state.jobs.unshift(nextJob);
-  Object.assign(leadItem, {
-    lead_number: leadNumber,
-    status: "job_accepted",
-    active: false,
-    converted_job_id: nextJob.id,
-    updated_at: nowIso(),
-  });
-  saveState();
-  navigate(`/jobs/${nextJob.id}`);
+  renderLeadConversionForm(id);
 }
 
 function toggleLeadClosed(id) {
@@ -3396,6 +3835,19 @@ function renderJobDetail(id) {
   const customerSelect = canManageCustomerLinks() && customerFeaturesAvailable()
     ? selectField("Customer", "customer_id", jobItem.customer_id || "", customerOptions(jobItem.customer_id || ""))
     : "";
+  const enquiryContext = jobItem.enquiry_context || {};
+  const enquiryAttachments = Array.isArray(jobItem.enquiry_attachments) ? jobItem.enquiry_attachments : [];
+  const enquirySummary = jobItem.source_lead_id || enquiryContext.source_lead_id
+    ? `<section class="panel"><h2>Enquiry context</h2><div class="list">
+        ${metricRow("Source lead", jobItem.source_lead_id || enquiryContext.source_lead_id || "Not recorded")}
+        ${metricRow("Scope", jobItem.scope || enquiryContext.scope || "Not recorded")}
+        ${metricRow("Budget", jobItem.budget || enquiryContext.budget || "Not recorded")}
+        ${metricRow("Location details", jobItem.location_details || enquiryContext.location_details || "Not recorded")}
+      </div>
+      ${jobItem.notes || enquiryContext.notes ? `<p class="item-notes">${linkify(jobItem.notes || enquiryContext.notes)}</p>` : ""}
+      <p class="muted">Attachments retained: ${enquiryAttachments.length}</p>
+    </section>`
+    : "";
 
   app.innerHTML = `
     <div class="stack">
@@ -3427,6 +3879,7 @@ function renderJobDetail(id) {
           </div>
         </form>
       </section>
+      ${enquirySummary}
       ${qcWarning ? `<section class="warning-panel"><strong>QC checklist incomplete.</strong><br><span>Complete QC or use a checklist override before marking this job complete.</span></section>` : ""}
       ${renderJobWorkshopArea(id)}
       ${renderJobChecklistArea(id)}

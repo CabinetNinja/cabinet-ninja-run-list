@@ -1,6 +1,6 @@
 # Cabinet Ninja Phase 1C customer foundation
 
-Status: local implementation only. No Phase 1C migration has been applied to production, and no customer portal access is enabled.
+Status: local implementation only. The customer foundation migration is already a supervised production change; the lead-conversion extension below is pending local work only. No customer portal access is enabled.
 
 ## Scope
 
@@ -16,6 +16,16 @@ Status: local implementation only. No Phase 1C migration has been applied to pro
 - Populate `created_by` and `updated_by` from the authenticated user when the server receives customer writes.
 - Replace whole-state client upserts with record-level optimistic updates keyed by `id` and the last known `updated_at`. A concurrent update fails closed: rejected values are not persisted as authoritative local state, the server record must be reloaded, and deliberate reapplication is required before another save.
 - Require both the `customers` table and `jobs.customer_id` column before exposing customer routes or sending customer-linked job payloads. Before the migration, customer data is not retained locally, customer links are omitted from job writes, and ordinary job workflows remain available with a clear nonfatal status message.
+
+## Lead-to-customer conversion extension
+
+- Pending migration: `supabase/migrations/202608170001_lead_customer_conversion.sql`.
+- The lead detail action is available only after the conversion columns and transaction function are detected, and only to Owner/Admin or Office. Before that migration, the action is hidden and direct conversion attempts fail closed with a nonfatal message; ordinary lead, job, customer, and Run List workflows remain available.
+- Conversion preserves the original lead and records `converted_at`, `converted_by`, `customer_id`, `job_id`, and the legacy `converted_job_id`. It creates or links exactly one customer and creates or links exactly one job. Existing legacy `converted_job_id` values are reused rather than creating a second job.
+- Duplicate candidates are detected from the submitted conversion-form values using one shared NZ phone rule (punctuation removed and `64`/`0064` normalised to the local `0` prefix) plus normalized email, display name, and address. When candidates exist, the user must explicitly choose `link_existing` or `create_new`.
+- The database function serializes retries per lead and wraps customer, job, and lead writes in one transaction. A failed conversion rolls back all writes. The application local fallback uses the same validation and restores its pre-conversion snapshot on failure.
+- Scope, budget, location details, notes, and attachment references are copied into job enquiry context. Storage objects and paths are not moved or rewritten. Customer portal access remains disabled.
+- For a newly created job, the submitted/linked customer display name is used as `client_name`; the existing lead name remains the job name and the original lead is retained unchanged apart from conversion markers.
 
 ## Local implementation
 
@@ -33,6 +43,7 @@ Status: local implementation only. No Phase 1C migration has been applied to pro
 - The Phase 1B local regression runner remains the regression gate for the completed Phase 1B foundation.
 - Node regression checks include the record-level save tests and `tests/phase-1c-safety.test.mjs`.
 - Customer portal access remains disabled.
+- Conversion coverage includes new customer conversion, existing-customer linking, duplicate detection, retry/idempotency, original-lead preservation, customer/job links, rollback, role denial, and mobile conversion layout checks.
 - Local UI syntax, customer workflow, and pre-migration hard-block checks are required before merge; this checkout must report any unavailable Node or Supabase CLI dependency as blocked rather than treating static inspection as a pass.
 
 ## Review gate
