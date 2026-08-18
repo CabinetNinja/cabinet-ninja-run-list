@@ -4,6 +4,7 @@ const TABLES = [
   "customers",
   "leads",
   "jobs",
+  "job_financials",
   "categories",
   "items",
   "checklist_templates",
@@ -334,7 +335,7 @@ const seedItems = [
   },
 ];
 
-let state = { suppliers: [], customers: [], leads: [], jobs: [], categories: [], items: [] };
+let state = { suppliers: [], customers: [], leads: [], jobs: [], job_financials: [], categories: [], items: [] };
 let lastSyncedState = null;
 let dataStore = null;
 let backendStatus = {
@@ -353,6 +354,7 @@ let workshopTablesAvailable = true;
 let customersTableAvailable = true;
 let customerLinkColumnAvailable = true;
 let leadConversionAvailable = true;
+let financialsTableAvailable = true;
 let dymoLabelState = { labels: [], selectedSheetKeys: [], includeSeparators: true, edgeOrder: "left,top,right,bottom" };
 let customerFolderSelection = { files: [], name: "", handle: null };
 const customerFolderRelativePaths = new WeakMap();
@@ -831,6 +833,23 @@ function normalizeState(data) {
       enquiry_attachments: Array.isArray(item.enquiry_attachments) ? item.enquiry_attachments : [],
       enquiry_context: item.enquiry_context || {},
     })),
+    job_financials: (data.job_financials || []).map((item) => ({
+      job_id: "",
+      quote_reference: "",
+      invoice_reference: "",
+      payment_status: "",
+      commercial_notes: "",
+      created_at: "",
+      updated_at: "",
+      ...item,
+      job_id: item.job_id || "",
+      quote_reference: item.quote_reference || "",
+      invoice_reference: item.invoice_reference || "",
+      payment_status: item.payment_status || "",
+      commercial_notes: item.commercial_notes || "",
+      created_at: item.created_at || "",
+      updated_at: item.updated_at || "",
+    })),
     categories: (data.categories || []).map((item) => ({
       notes: "",
       ...item,
@@ -1194,10 +1213,10 @@ function cloneState(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function changedRecordRows(previousRows = [], nextRows = [], cleaner = (row) => row) {
-  const previousById = new Map(previousRows.filter((row) => row?.id).map((row) => [row.id, cleaner(row)]));
+function changedRecordRows(previousRows = [], nextRows = [], cleaner = (row) => row, keyField = "id") {
+  const previousByKey = new Map(previousRows.filter((row) => row?.[keyField]).map((row) => [row[keyField], cleaner(row)]));
   return nextRows
-    .map((row) => ({ row, cleaned: cleaner(row), previous: previousById.get(row.id) }))
+    .map((row) => ({ row, cleaned: cleaner(row), previous: previousByKey.get(row[keyField]) }))
     .filter(({ cleaned, previous }) => !previous || JSON.stringify(cleaned) !== JSON.stringify(previous));
 }
 
@@ -1225,8 +1244,12 @@ function canManageCustomerLinks() {
   return canManageCustomers();
 }
 
+function canManageCommercialRecords() {
+  return canManageCustomers();
+}
+
 function persistAuthoritativeState(nextState) {
-  const localSnapshot = isSupabaseMode() && (!customerFeaturesAvailable() || !leadConversionAvailable)
+  const localSnapshot = isSupabaseMode() && (!customerFeaturesAvailable() || !leadConversionAvailable || !financialsTableAvailable)
     ? stripUnavailableMigrationData(nextState)
     : cloneState(nextState);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(localSnapshot));
@@ -1239,7 +1262,8 @@ function restoreAuthoritativeState() {
 }
 
 function isConcurrencyError(error) {
-  return `${error?.message || ""}`.includes("Concurrent update detected");
+  return `${error?.message || ""}`.includes("Concurrent update detected") ||
+    `${error?.message || ""}`.includes("Concurrent create detected");
 }
 
 function renderSyncConflict() {
@@ -1308,10 +1332,17 @@ function stripLeadConversionData(data) {
   return safeState;
 }
 
+function stripFinancialData(data) {
+  const safeState = cloneState(data);
+  safeState.job_financials = [];
+  return safeState;
+}
+
 function stripUnavailableMigrationData(data) {
   let safeState = cloneState(data);
   if (!customerFeaturesAvailable()) safeState = stripCustomerMigrationData(safeState);
   if (!leadConversionAvailable) safeState = stripLeadConversionData(safeState);
+  if (!financialsTableAvailable) safeState = stripFinancialData(safeState);
   return safeState;
 }
 
@@ -1394,10 +1425,20 @@ function createSupabaseStore(config) {
     return { data: [], error: null };
   }
 
+  async function optionalFinancialsQuery(query) {
+    const result = await query;
+    if (!result.error) return result;
+    if (!isMissingFinancialsTableError(result.error)) throw result.error;
+    financialsTableAvailable = false;
+    backendStatus.message = financialsMigrationMessage();
+    return { data: [], error: null };
+  }
+
   async function loadTables() {
     customersTableAvailable = true;
     customerLinkColumnAvailable = true;
     leadConversionAvailable = true;
+    financialsTableAvailable = true;
     workshopTablesAvailable = true;
     const [
       suppliers,
@@ -1406,6 +1447,7 @@ function createSupabaseStore(config) {
       leadConversionColumns,
       leads,
       jobs,
+      jobFinancials,
       categories,
       items,
       checklistTemplates,
@@ -1428,6 +1470,7 @@ function createSupabaseStore(config) {
       optionalLeadConversionQuery(client.from("leads").select("id, converted_at, converted_by, customer_id, job_id, conversion_context, scope, budget, location_details, enquiry_attachments").limit(1)),
       client.from("leads").select("*").order("created_at", { ascending: false }),
       client.from("jobs").select("*").order("job_name"),
+      optionalFinancialsQuery(client.from("job_financials").select("*").order("updated_at", { ascending: false })),
       client.from("categories").select("*").order("category_name"),
       client.from("items").select("*").order("created_at", { ascending: false }),
       client.from("checklist_templates").select("*").order("name"),
@@ -1450,6 +1493,7 @@ function createSupabaseStore(config) {
       customers,
       leads,
       jobs,
+      job_financials: jobFinancials,
       categories,
       items,
       checklist_templates: checklistTemplates,
@@ -1470,14 +1514,17 @@ function createSupabaseStore(config) {
     for (const key of TABLES) {
       if (result[key].error) throw result[key].error;
     }
+    if (jobFinancials.error) throw jobFinancials.error;
     if (!customerFeaturesAvailable()) backendStatus.message = customerMigrationMessage();
     else if (!leadConversionAvailable) backendStatus.message = leadConversionMigrationMessage();
+    else if (!financialsTableAvailable) backendStatus.message = financialsMigrationMessage();
 
     return normalizeState({
       suppliers: suppliers.data || [],
       customers: customers.data || [],
       leads: leads.data || [],
       jobs: jobs.data || [],
+      job_financials: jobFinancials.data || [],
       categories: categories.data || [],
       items: items.data || [],
       checklist_templates: checklistTemplates.data || [],
@@ -1513,6 +1560,7 @@ function createSupabaseStore(config) {
     if (customerFeaturesAvailable()) await saveChangedRows("customers", previous.customers, normalized.customers, cleanCustomer);
     await saveChangedDashboardRows("leads", previous.leads, normalized.leads, (row) => cleanLead(row, leadConversionAvailable));
     await saveChangedDashboardRows("jobs", previous.jobs, normalized.jobs, (row) => cleanJob(row, customerFeaturesAvailable() && canManageCustomerLinks()));
+    if (financialsTableAvailable && canManageCommercialRecords()) await saveChangedRows("job_financials", previous.job_financials, normalized.job_financials, cleanJobFinancial, "job_id");
     await saveChangedRows("categories", previous.categories, normalized.categories, cleanCategory);
     await saveChangedRows("items", previous.items, normalized.items, cleanItem);
     await saveChangedRows("checklist_templates", previous.checklist_templates, normalized.checklist_templates, cleanChecklistTemplate);
@@ -1533,9 +1581,9 @@ function createSupabaseStore(config) {
     return normalized;
   }
 
-  async function saveChangedRows(table, previousRows = [], nextRows = [], cleaner) {
-    for (const { row, cleaned, previous } of changedRecordRows(previousRows, nextRows, cleaner)) {
-      await saveRecord(table, row, cleaned, previous);
+  async function saveChangedRows(table, previousRows = [], nextRows = [], cleaner, keyField = "id") {
+    for (const { row, cleaned, previous } of changedRecordRows(previousRows, nextRows, cleaner, keyField)) {
+      await saveRecordByKey(table, row, cleaned, previous, keyField);
     }
   }
 
@@ -1555,21 +1603,30 @@ function createSupabaseStore(config) {
   }
 
   async function saveRecord(table, row, cleaned, previous) {
+    return saveRecordByKey(table, row, cleaned, previous, "id");
+  }
+
+  async function saveRecordByKey(table, row, cleaned, previous, keyField = "id") {
     if (!previous) {
       const { data, error } = await client.from(table).insert(cleaned).select("*");
-      if (error) throw error;
+      if (error) {
+        if (table === "job_financials" && error.code === "23505") {
+          throw new Error(`Concurrent create detected for ${table}/${row[keyField]}; reload before saving.`);
+        }
+        throw error;
+      }
       if (data?.[0]) Object.assign(row, data[0]);
       return;
     }
-    if (!previous.updated_at) throw new Error(`Cannot safely update ${table}/${row.id}: missing updated_at.`);
+    if (!previous.updated_at) throw new Error(`Cannot safely update ${table}/${row[keyField]}: missing updated_at.`);
     const { data, error } = await client
       .from(table)
       .update(cleaned)
-      .eq("id", row.id)
+      .eq(keyField, row[keyField])
       .eq("updated_at", previous.updated_at)
       .select("*");
     if (error) throw error;
-    if (!data?.length) throw new Error(`Concurrent update detected for ${table}/${row.id}; reload before saving.`);
+    if (!data?.length) throw new Error(`Concurrent update detected for ${table}/${row[keyField]}; reload before saving.`);
     Object.assign(row, data[0]);
   }
 
@@ -1604,6 +1661,8 @@ function createSupabaseStore(config) {
           ? customerMigrationMessage()
           : !leadConversionAvailable
             ? leadConversionMigrationMessage()
+            : !financialsTableAvailable
+              ? financialsMigrationMessage()
             : workshopTablesAvailable ? "Synced with Supabase" : backendStatus.message,
         userEmail: session?.user?.email || "",
         userId: session?.user?.id || "",
@@ -1762,6 +1821,18 @@ function cleanJob(item, includeCustomerLink = true) {
   return cleaned;
 }
 
+function cleanJobFinancial(item) {
+  return pickDefined({
+    job_id: item.job_id,
+    quote_reference: item.quote_reference || null,
+    invoice_reference: item.invoice_reference || null,
+    payment_status: item.payment_status || null,
+    commercial_notes: item.commercial_notes || null,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  });
+}
+
 function stripDashboardColumns(row) {
   const {
     next_action,
@@ -1813,12 +1884,21 @@ function isMissingLeadConversionColumnError(error) {
     .some((column) => message.includes(column)) && (message.includes("does not exist") || message.includes("schema cache"));
 }
 
+function isMissingFinancialsTableError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return message.includes("job_financials") && (message.includes("does not exist") || message.includes("schema cache"));
+}
+
 function customerMigrationMessage() {
   return "Customer features require the Phase 1C migration (customers table and jobs.customer_id column). Existing job features remain available.";
 }
 
 function leadConversionMigrationMessage() {
   return "Lead conversion requires the Phase 1C conversion migration. Existing lead, customer, job, and Run List features remain available.";
+}
+
+function financialsMigrationMessage() {
+  return "Commercial records require the Phase 1B financials table. Existing job and Run List features remain available.";
 }
 
 function cleanCategory(item) {
@@ -3848,6 +3928,7 @@ function renderJobDetail(id) {
       <p class="muted">Attachments retained: ${enquiryAttachments.length}</p>
     </section>`
     : "";
+  const financialsPanel = renderJobFinancialsPanel(id);
 
   app.innerHTML = `
     <div class="stack">
@@ -3880,6 +3961,7 @@ function renderJobDetail(id) {
         </form>
       </section>
       ${enquirySummary}
+      ${financialsPanel}
       ${qcWarning ? `<section class="warning-panel"><strong>QC checklist incomplete.</strong><br><span>Complete QC or use a checklist override before marking this job complete.</span></section>` : ""}
       ${renderJobWorkshopArea(id)}
       ${renderJobChecklistArea(id)}
@@ -3910,6 +3992,10 @@ function renderJobDetail(id) {
   document.getElementById("jobPlanningForm").addEventListener("submit", (event) => {
     event.preventDefault();
     updateJobPlanning(id, Object.fromEntries(new FormData(event.currentTarget).entries()));
+  });
+  document.getElementById("jobFinancialForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveJobFinancials(id, Object.fromEntries(new FormData(event.currentTarget).entries()));
   });
   document.getElementById("completeJobButton").addEventListener("click", () => toggleJobComplete(id));
   document.getElementById("cancelJobButton").addEventListener("click", () => toggleJobCancelled(id));
@@ -4020,6 +4106,75 @@ async function updateJobPlanning(jobId, values) {
   try {
     await saveState();
     toast("Job planning saved.");
+    render();
+  } catch {
+    // saveState restores the last authoritative snapshot and renders the error state.
+  }
+}
+
+function jobFinancialsByJobId(jobId) {
+  return (state.job_financials || []).find((record) => record.job_id === jobId) || null;
+}
+
+function renderJobFinancialsPanel(jobId) {
+  if (!canManageCommercialRecords()) return "";
+  if (isSupabaseMode() && !financialsTableAvailable) {
+    return `
+      <section class="panel warning-panel internal-commercial-panel" aria-label="Commercial record unavailable">
+        <h2>Commercial record unavailable</h2>
+        <p>${escapeHtml(financialsMigrationMessage())}</p>
+      </section>
+    `;
+  }
+  const financials = jobFinancialsByJobId(jobId) || {};
+  return `
+    <section class="panel internal-commercial-panel">
+      <div class="section-heading">
+        <div>
+          <h2>Commercial record</h2>
+          <p class="muted">Internal only. These fields are not shared outside the internal team.</p>
+        </div>
+        <span class="status-pill">Owner/Admin and Office</span>
+      </div>
+      <form class="form-grid" id="jobFinancialForm">
+        ${field("Quote reference", "quote_reference", "text", financials.quote_reference || "")}
+        ${field("Invoice reference", "invoice_reference", "text", financials.invoice_reference || "")}
+        ${field("Payment status", "payment_status", "text", financials.payment_status || "")}
+        ${textareaField("Commercial notes", "commercial_notes", financials.commercial_notes || "", "full")}
+        <div class="form-actions full">
+          <button class="primary-action" type="submit">Save commercial record</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+async function saveJobFinancials(jobId, values) {
+  if (!canManageCommercialRecords()) {
+    toast("Only Owner/Admin or Office may edit commercial records.");
+    return;
+  }
+  if (isSupabaseMode() && !financialsTableAvailable) {
+    toast(financialsMigrationMessage());
+    return;
+  }
+  const existing = jobFinancialsByJobId(jobId);
+  const record = existing || {
+    job_id: jobId,
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  };
+  Object.assign(record, {
+    quote_reference: String(values.quote_reference || "").trim(),
+    invoice_reference: String(values.invoice_reference || "").trim(),
+    payment_status: String(values.payment_status || "").trim(),
+    commercial_notes: String(values.commercial_notes || "").trim(),
+    updated_at: nowIso(),
+  });
+  if (!existing) state.job_financials.unshift(record);
+  try {
+    await saveState();
+    toast("Commercial record saved.");
     render();
   } catch {
     // saveState restores the last authoritative snapshot and renders the error state.
