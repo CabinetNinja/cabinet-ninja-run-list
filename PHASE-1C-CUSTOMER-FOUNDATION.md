@@ -1,6 +1,6 @@
 # Cabinet Ninja Phase 1C customer foundation
 
-Status: local implementation only. The customer foundation migration is already a supervised production change; the lead-conversion extension below is pending local work only. No customer portal access is enabled.
+Status: customer foundation and lead-conversion migration applied in supervised production. The internal conversion workflow is deployed and verified, but no customer was created and no real lead was converted by the rollout. No customer portal access is enabled.
 
 ## Scope
 
@@ -19,7 +19,7 @@ Status: local implementation only. The customer foundation migration is already 
 
 ## Lead-to-customer conversion extension
 
-- Pending migration: `supabase/migrations/202608170001_lead_customer_conversion.sql`.
+- Applied migration: `supabase/migrations/202608170001_lead_customer_conversion.sql`. Do not re-apply it. The migration history is verified through `202608170001`; the first real lead conversion remains a separate supervised approval for the exact lead and proposed customer/job result.
 - The lead detail action is available only after the conversion columns and transaction function are detected, and only to Owner/Admin or Office. Before that migration, the action is hidden and direct conversion attempts fail closed with a nonfatal message; ordinary lead, job, customer, and Run List workflows remain available.
 - Conversion preserves the original lead and records `converted_at`, `converted_by`, `customer_id`, `job_id`, and the legacy `converted_job_id`. It creates or links exactly one customer and creates or links exactly one job. Existing legacy `converted_job_id` values are reused rather than creating a second job.
 - Duplicate candidates are detected from the submitted conversion-form values using one shared NZ phone rule (punctuation removed and `64`/`0064` normalised to the local `0` prefix) plus normalized email, display name, and address. When candidates exist, the user must explicitly choose `link_existing` or `create_new`.
@@ -46,6 +46,17 @@ Status: local implementation only. The customer foundation migration is already 
 - Conversion coverage includes new customer conversion, existing-customer linking, duplicate detection, retry/idempotency, original-lead preservation, customer/job links, rollback, role denial, and mobile conversion layout checks.
 - Local UI syntax, customer workflow, and pre-migration hard-block checks are required before merge; this checkout must report any unavailable Node or Supabase CLI dependency as blocked rather than treating static inspection as a pass.
 
+## Production closeout
+
+The supervised `202608170001` rollout was verified without creating customer data or converting a lead:
+
+- Migration history is complete through `202608170001`; no later migration was applied.
+- Existing counts remain 7 leads, 0 customers, and 12 jobs, with 0 non-null customer links and 0 populated new conversion fields.
+- Existing job IDs and `CN-####` values remain preserved with no duplicate CN numbers.
+- The protected `job-files` Storage inventory remains 22 objects / 9,451,630 bytes, private, with its pre-cutover object metadata unchanged.
+- The conversion function is security-invoker, uses the shared canonical NZ phone function, serializes retries, and remains restricted by the internal customer-link role boundary.
+- The customer portal, invitations, external access, and first real lead conversion remain disabled or separately gated.
+
 ## Review gate
 
-Review customer field semantics, role visibility, customer-number generation, job-form linking, and the production rollout/rollback plan in the draft PR. Add staff only after the record-level update path is accepted. Production migration remains a separate supervised step after review and approval.
+Review customer field semantics, role visibility, customer-number generation, job-form linking, and the production conversion evidence in the draft PR. Add staff only after the record-level update path is accepted. The migration gate is complete; the next production gate is Adam's explicit approval for one named real lead and the proposed customer/job result. No bulk conversion or automatic backfill is permitted.

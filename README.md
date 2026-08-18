@@ -73,7 +73,7 @@ The Phase 1A production audit confirmed that the historical scripts above descri
 
 Phase 1B production rollout is complete and recorded in `PHASE-1B-PRODUCTION-PREFLIGHT.md`: migrations `202607240002` through `202607240005`, the Owner/Admin bootstrap, and the reviewed private `job-files` access path were applied and verified. Existing jobs, IDs, CN numbers, and files were preserved; no invitations or email were sent.
 
-Phase 1C customer foundation remains local implementation only. Do not apply its migration to production from this branch. The exact Phase 1B production order, STOP/GO points, backup evidence, verification queries, and rollback scripts remain documented in `PHASE-1B-DEPLOYMENT-RUNBOOK.md`.
+Phase 1C customer foundation and the lead-to-customer conversion migration are applied and verified in production. Do not re-apply `202608140001` or `202608170001`. The conversion function and canonical NZ phone boundary are deployed, but no customer was created and no real lead was converted by the rollout. Converting a real lead remains a separate supervised approval. The exact Phase 1B production order, STOP/GO points, backup evidence, verification queries, and rollback scripts remain documented in `PHASE-1B-DEPLOYMENT-RUNBOOK.md`.
 
 ## Running locally
 
