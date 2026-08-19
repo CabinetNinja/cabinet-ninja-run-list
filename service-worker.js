@@ -1,4 +1,4 @@
-const CACHE_NAME = "cabinet-ninja-run-list-v30";
+const CACHE_NAME = "cabinet-ninja-run-list-v31";
 const ASSETS = [
   "./",
   "./index.html",
@@ -10,6 +10,10 @@ const ASSETS = [
   "./vendor/pdfjs/pdf.min.mjs",
   "./vendor/pdfjs/pdf.worker.min.mjs",
 ];
+
+function isAppShellAsset(url) {
+  return ASSETS.some((asset) => new URL(asset, self.registration.scope).pathname === url.pathname);
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
@@ -28,7 +32,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
-  const appShellAsset = ASSETS.some((asset) => url.pathname.endsWith(asset.replace("./", "/cabinet-ninja-run-list/")));
+  const appShellAsset = isAppShellAsset(url);
   if (appShellAsset) {
     event.respondWith(
       fetch(event.request)
