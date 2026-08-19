@@ -3961,6 +3961,7 @@ function renderJobDetail(id) {
         </form>
       </section>
       ${enquirySummary}
+      ${renderJobActivityCard(id)}
       ${financialsPanel}
       ${qcWarning ? `<section class="warning-panel"><strong>QC checklist incomplete.</strong><br><span>Complete QC or use a checklist override before marking this job complete.</span></section>` : ""}
       ${renderJobWorkshopArea(id)}
@@ -4702,9 +4703,16 @@ function renderWorkshopDymoCard(selected) {
   `;
 }
 
-function renderWorkshopActivityCard(activity) {
+function jobActivityFor(jobId, limit = 8) {
+  return state.activity_history
+    .filter((item) => item.job_id === jobId)
+    .sort((a, b) => (b.happened_at || "").localeCompare(a.happened_at || ""))
+    .slice(0, limit);
+}
+
+function renderActivityCard(activity, emptyMessage, className = "panel", showDetails = false) {
   return `
-    <section class="panel workshop-side-card">
+    <section class="${className}">
       <div class="section-heading">
         <h2>Activity</h2>
         <span class="count-pill">${activity.length}</span>
@@ -4712,12 +4720,24 @@ function renderWorkshopActivityCard(activity) {
       <div class="list">
         ${activity.length ? activity.map((item) => `
           <div class="list-link compact-link">
-            <span><strong>${escapeHtml(item.action)}</strong><br><span class="muted">${escapeHtml(formatDateTime(item.happened_at))}</span></span>
+            <span>
+              <strong>${escapeHtml(item.action || "Activity")}</strong><br>
+              <span class="muted">${escapeHtml(item.happened_at ? formatDateTime(item.happened_at) : "Time not recorded")}</span>
+              ${showDetails && (item.new_value || item.reason || item.notes) ? `<br><span class="muted">${escapeHtml(item.new_value || item.reason || item.notes)}</span>` : ""}
+            </span>
           </div>
-        `).join("") : empty("No recent workshop activity for this job.")}
+        `).join("") : empty(emptyMessage || "No recent activity for this job.")}
       </div>
     </section>
   `;
+}
+
+function renderJobActivityCard(jobId) {
+  return renderActivityCard(jobActivityFor(jobId), "No recent activity for this job.", "panel", true);
+}
+
+function renderWorkshopActivityCard(activity) {
+  return renderActivityCard(activity, "No recent workshop activity for this job.", "panel workshop-side-card");
 }
 function renderWorkshopStat(label, value) {
   return `<section class="panel dashboard-card compact-stat"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></section>`;
