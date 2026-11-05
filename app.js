@@ -5002,8 +5002,8 @@ function renderCutImportForm(params = {}) {
       ${field("Revision override", "filename_revision", "text", params.filename_revision || "")}
       ${textareaField("Import notes", "revision_notes", "", "full")}
       <section class="warning-panel full">
-        <strong>Versions:</strong> Add the revised cut-sheet PDF and select the matching NC files. Run List reads each NC filename and revision, but does not upload, store, open, or alter NC file contents. If a filename/version changes, it creates a review item.<br><br>
-        <strong>Safety:</strong> Run List stores the cut-sheet PDF and authorised `.nc` production file. CNC software remains responsible for opening and running NC files; `.cnc`, `.tap`, and `.gcode` remain filename/version references.
+        <strong>Versions:</strong> Add the revised cut-sheet PDF and select the matching NC files. Run List reads each filename and revision and preserves uploaded file contents. If a filename/version changes, it creates a review item.<br><br>
+        <strong>Safety:</strong> Run List stores the cut-sheet PDF and authorised <code>.nc</code> production file. CNC software remains responsible for opening and running NC files; <code>.cnc</code>, <code>.tap</code>, and <code>.gcode</code> remain filename/version references.
       </section>
       <div class="form-actions full">
         <button class="primary-action" type="submit">Import files</button>
@@ -7192,13 +7192,14 @@ function fileToDataUrl(file) {
 }
 
 async function storeWorkshopFile(jobItem, file, parsed) {
+  const relativePath = relativePathForCustomerFile(file);
   const isNcProduction = fileExtension(file.name).toLowerCase() === "nc";
   const referenceOnly = parsed.file_kind === "nc" && !isNcProduction;
   if (!referenceOnly) {
+    file = await normalizeWorkshopFileMime(file);
     assertJobFileAllowed(file);
     await assertJobFileContentAllowed(file);
   }
-  const relativePath = relativePathForCustomerFile(file);
   const hash = referenceOnly ? `reference:${file.size}:${file.lastModified}:${relativePath}` : await hashFile(file);
   const existing = state.job_files.find((item) =>
     item.job_id === jobItem.id &&
@@ -7249,6 +7250,35 @@ async function storeWorkshopFile(jobItem, file, parsed) {
   return record;
 }
 
+
+async function normalizeWorkshopFileMime(file) {
+  // OS MIME labels are unreliable for local CNC exports. Only normalize known
+  // ambiguous labels after checking contents; keep the storage allowlist strict.
+  const extension = fileExtension(file.name).toLowerCase();
+  const mime = String(file.type || "").toLowerCase();
+  const canonical = extension === "pdf" ? "application/pdf" : extension === "nc" ? "application/octet-stream" : "";
+  if (!canonical || mime === canonical) return file;
+  const ambiguous = extension === "pdf"
+    ? ["", "application/octet-stream"]
+    : ["", "text/plain", "application/x-netcdf"];
+  if (!ambiguous.includes(mime)) return file;
+  if (file.size > JOB_FILE_MAX_BYTES) throw new Error("Files must be 50 MiB or smaller.");
+  await assertJobFileContentAllowed(file);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (extension === "pdf") {
+    if (String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") {
+      throw new Error("The PDF contents do not match a cut-sheet PDF.");
+    }
+  } else {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text) ||
+        !/^\s*(?:N\d+\s*)?[GM]\d+(?=[\s.A-Z]|$)/im.test(text)) {
+      throw new Error("The NC contents do not match a text CNC program.");
+    }
+  }
+  // File construction changes metadata only, never the PDF or machine bytes.
+  return new File([file], file.name, { type: canonical, lastModified: file.lastModified });
+}
 
 function assertJobFileAllowed(file) {
   if (file.size > JOB_FILE_MAX_BYTES) {
