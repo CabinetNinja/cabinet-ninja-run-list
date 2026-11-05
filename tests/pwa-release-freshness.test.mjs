@@ -6,7 +6,7 @@ import vm from "node:vm";
 const serviceWorkerSource = readFileSync(new URL("../service-worker.js", import.meta.url), "utf8");
 
 test("PWA cache version advances with the merged application release", () => {
-  assert.match(serviceWorkerSource, /const CACHE_NAME = "cabinet-ninja-run-list-v31";/);
+  assert.match(serviceWorkerSource, /const CACHE_NAME = "cabinet-ninja-run-list-v32";/);
   assert.doesNotMatch(serviceWorkerSource, /cabinet-ninja-run-list-v30/);
   assert.match(serviceWorkerSource, /self\.skipWaiting\(\)/);
   assert.match(serviceWorkerSource, /self\.clients\.claim\(\)/);
